@@ -1,0 +1,1 @@
+{"model": "rtmpose-s", "device": "cpu", "requested_device": "cpu", "fps": 0.9498760596387124, "p95_ms": 2176.6329791367752, "n": 150, "size_mb": null}

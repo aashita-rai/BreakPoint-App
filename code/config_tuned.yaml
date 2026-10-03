@@ -1,0 +1,4 @@
+analysis:
+  rep:
+    min_distance_s: 0.8
+    prominence: 0.25

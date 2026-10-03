@@ -1,0 +1,79 @@
+# All tunable values live here. Weights, cap and thresholds are illustrative
+# (tuned on one video only), not clinically validated.
+
+video: data/raw/squats.mp4
+pose_fps: 30            # resample input to at most this many fps for pose inference
+
+# ---- models --------------------------------------------------------------
+# deploy_rank: lower = simpler to deploy (used only to break score ties)
+# export: formats the family supports natively. DECLARED, not tested by the pipeline.
+models:
+  - {name: mediapipe-lite,   family: mediapipe, variant: lite,  deploy_rank: 1, export: [tflite]}
+  - {name: mediapipe-full,   family: mediapipe, variant: full,  deploy_rank: 1, export: [tflite]}
+  - {name: mediapipe-heavy,  family: mediapipe, variant: heavy, deploy_rank: 1, export: [tflite]}
+  - {name: yolo11n-pose,     family: yolo, ckpt: yolo11n-pose.pt, deploy_rank: 2, export: [onnx, tflite, coreml]}
+  - {name: yolo11s-pose,     family: yolo, ckpt: yolo11s-pose.pt, deploy_rank: 2, export: [onnx, tflite, coreml]}
+  - {name: yolo11m-pose,     family: yolo, ckpt: yolo11m-pose.pt, deploy_rank: 2, export: [onnx, tflite, coreml]}
+  - {name: yolo11l-pose,     family: yolo, ckpt: yolo11l-pose.pt, deploy_rank: 2, export: [onnx, tflite, coreml]}
+  - {name: yolo11x-pose,     family: yolo, ckpt: yolo11x-pose.pt, deploy_rank: 2, export: [onnx, tflite, coreml]}
+  # rtmlib ships RTMPose-s / -m / -x (not -l): lightweight=s, balanced=m, performance=x
+  - {name: rtmpose-s,        family: rtmpose, mode: lightweight, deploy_rank: 1, export: [onnx]}
+  - {name: rtmpose-m,        family: rtmpose, mode: balanced,    deploy_rank: 1, export: [onnx]}
+  - {name: rtmpose-x,        family: rtmpose, mode: performance, deploy_rank: 1, export: [onnx]}
+  - {name: vitpose-base,     family: vitpose, ckpt: usyd-community/vitpose-base-simple, deploy_rank: 4, export: []}
+  - {name: vitpose-large,    family: vitpose, ckpt: usyd-community/vitpose-plus-large,  deploy_rank: 4, export: []}
+  # optional, off by default
+  - {name: movenet-thunder,  family: movenet, enabled: false, deploy_rank: 3, export: [tflite]}
+  - {name: rtmo-m,           family: rtmpose, mode: balanced, one_stage: true, enabled: false, deploy_rank: 2, export: [onnx]}
+
+mediapipe_urls:
+  lite:  https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task
+  full:  https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+  heavy: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+person_detector: PekingU/rtdetr_r50vd_coco_o365   # used by ViTPose
+
+# ---- analysis (shared by every model) -----------------------------------
+analysis:
+  min_conf: 0.30            # keypoints below this are masked then interpolated
+  max_gap_s: 0.60           # longest gap that gets interpolated
+  max_missing_frac: 0.30    # more missing than this -> hard error, not silent garbage
+  smooth: savgol            # savgol | one_euro
+  smooth_window_s: 0.20
+  smooth_poly: 2
+  one_euro: {min_cutoff: 1.0, beta: 0.05, dcutoff: 1.0}
+  standing_percentile: 15   # hip heights in the top 15% define "standing"
+  active_window_s: 2.0
+  rep:
+    prominence: 0.25        # min squat depth in leg-lengths for a bottom to count
+    min_distance_s: 0.8
+    min_rep_s: 0.8
+    max_rep_s: 8.0
+    min_depth: 0.20
+    stand_tol: 0.25         # rep boundaries must return within this of standing
+  fatigue:
+    baseline_reps: 3
+    cap: 0.30
+    weights: {tempo: 0.35, depth: 0.30, speed: 0.35}
+    smooth_reps: 3
+    breakdown_threshold: 40
+    breakdown_consecutive: 2
+    green_below: 25
+    amber_below: 40
+  mismatch_threshold: 3
+
+# ---- validation -----------------------------------------------------------
+validation:
+  split_block_s: 10         # alternate blocks: even=dev, odd=test
+  n_frames: 100
+  match_window_s: 0.3
+  pck_thresholds: [0.05, 0.10]
+  bottom_phase_halfwidth_s: 0.15
+  degradations: [half_res, blur, low_light, jpeg, tilt]
+  weights: {keypoints: 0.40, reps: 0.25, stability: 0.15, robustness: 0.10, speed: 0.10}
+  gate: {cpu_fps: 10.0, require_export: true}
+  tie_margin: 0.01
+  gpu_fps_target: 30.0
+
+# ---- messages / API -------------------------------------------------------
+# LLM is optional: set LLM_BASE_URL, LLM_API_KEY, LLM_MODEL (OpenAI-compatible).
+# Without them (or if the reply breaks a guardrail) the template text is used.

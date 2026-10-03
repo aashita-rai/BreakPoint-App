@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import type { AnalysisResult, CheckIn, Insights, Report } from '@/lib/squat-types';
 
 // Thin client for the FastAPI server in code/api/ (README §9).
@@ -52,7 +53,12 @@ export function uploadAndAnalyze(
     };
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
-        return reject(new ApiError(`Server error ${xhr.status}.`));
+        let detail = '';
+        try {
+          const d = JSON.parse(xhr.responseText)?.detail;
+          detail = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
+        } catch {}
+        return reject(new ApiError(detail ? `Server error ${xhr.status}: ${detail}` : `Server error ${xhr.status}.`));
       }
       try {
         resolve(normalizeResult(JSON.parse(xhr.responseText)));
@@ -68,9 +74,22 @@ export function uploadAndAnalyze(
 
     const form = new FormData();
     const name = uri.split('/').pop() || 'squats.mp4';
-    // React Native's FormData accepts { uri, name, type } for files.
-    form.append(UPLOAD_FIELD, { uri, name, type: 'video/mp4' } as unknown as Blob);
-    xhr.send(form);
+    if (Platform.OS === 'web') {
+      // Browsers need a real Blob; the { uri, name, type } object only works on iOS/Android.
+      fetch(uri)
+        .then((r) => r.blob())
+        .then((blob) => {
+          const fname = /\.(mp4|mov|m4v|webm)$/i.test(name) ? name : (blob.type.includes('quicktime') ? 'clip.mov' : 'clip.mp4');
+          form.append(UPLOAD_FIELD, blob, fname);
+          xhr.send(form);
+        })
+        .catch(() => reject(new ApiError('Could not read the selected video.')));
+    } else {
+      // React Native's FormData accepts { uri, name, type } for files.
+      const type = /\.mov$/i.test(name) ? 'video/quicktime' : 'video/mp4';
+      form.append(UPLOAD_FIELD, { uri, name, type } as unknown as Blob);
+      xhr.send(form);
+    }
   });
 }
 

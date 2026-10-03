@@ -1,0 +1,1 @@
+{"model": "mediapipe-heavy", "device": "cpu", "requested_device": "cpu", "fps": 18.343365233850385, "p95_ms": 60.949963741586544, "n": 150, "size_mb": 30.664242}

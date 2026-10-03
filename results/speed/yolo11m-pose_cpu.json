@@ -1,0 +1,1 @@
+{"model": "yolo11m-pose", "device": "cpu", "requested_device": "cpu", "fps": 10.65511757567112, "p95_ms": 94.81583752494771, "n": 150, "size_mb": 42.459307}

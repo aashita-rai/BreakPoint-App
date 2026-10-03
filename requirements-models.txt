@@ -1,0 +1,9 @@
+torch
+torchvision
+ultralytics
+mediapipe
+rtmlib
+onnxruntime-gpu
+transformers
+accelerate
+pillow

@@ -1,0 +1,6 @@
+{
+ "reference_model": "rtmpose-x",
+ "serve_model": "mediapipe-heavy",
+ "gt_mode": "labels",
+ "same_model": false
+}
