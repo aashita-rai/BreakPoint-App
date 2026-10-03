@@ -30,8 +30,15 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files (API keys such as ANTHROPIC_API_KEY must never be committed)
+.env
 .env*.local
+
+# Python (server/)
+__pycache__/
+*.pyc
+.venv/
+venv/
 
 # typescript
 *.tsbuildinfo

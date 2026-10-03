@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "BreakPoint",
+    "slug": "breakpoint",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "breakpoint",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -26,11 +26,33 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "BreakPoint needs access to your videos so you can upload squat sets for analysis.",
+          "cameraPermission": "BreakPoint uses the camera so you can record your squat sets.",
+          "microphonePermission": "BreakPoint records audio along with your squat videos."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "BreakPoint uses the microphone so coaches can dictate feedback.",
+          "speechRecognitionPermission": "BreakPoint turns your spoken feedback into text."
+        }
+      ],
+      "expo-video",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "BreakPoint records your voice so you can speak your check-in and feedback instead of typing."
         }
       ]
     ],
