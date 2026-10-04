@@ -1,4 +1,4 @@
-import type { AnalysisResult, RepResult } from '@/lib/squat-types';
+import type { AnalysisResult, RepResult, SquatVariation } from '@/lib/squat-types';
 import { ApiError, hasApi, type ServerStage, uploadAndAnalyze } from '@/services/api';
 
 import demoBundle from '../../assets/demo/result.json';
@@ -9,21 +9,28 @@ import demoBundle from '../../assets/demo/result.json';
 export const ANALYSIS_STAGES = [
   'Uploading video',
   'Running pose model',
-  'Computing fatigue index',
-  'Annotating video',
-  'Reading reps',
+  'Measuring reps and fatigue',
+  'Rendering annotated video',
+  'Loading results',
 ] as const;
 
-// Share of the progress bar for each part of a real upload. The server's part is
-// reported live by its job route, frame by frame.
-const UPLOAD_SHARE = [0, 0.15] as const;
-const SERVER_SHARE = [0.15, 0.9] as const;
-const READING_SHARE = [0.9, 1] as const;
-const lerp = ([lo, hi]: readonly [number, number], f: number) => lo + (hi - lo) * Math.min(1, Math.max(0, f));
+type Stage = (typeof ANALYSIS_STAGES)[number];
+
+/** Overall progress bands: upload 0-25%, server work 25-90% (real, polled), reading reps 90-100%. */
+const UPLOAD_END = 0.25;
+const SERVER_END = 0.9;
+
+const SERVER_STAGE: Record<ServerStage, Stage> = {
+  queued: 'Running pose model',
+  pose: 'Running pose model',
+  analysis: 'Measuring reps and fatigue',
+  render: 'Rendering annotated video',
+  done: 'Loading results',
+};
 
 export type AnalyzeCallbacks = {
   /** fraction is 0–1; stage is one of ANALYSIS_STAGES. */
-  onProgress?: (fraction: number, stage: (typeof ANALYSIS_STAGES)[number]) => void;
+  onProgress?: (fraction: number, stage: Stage) => void;
   /** Called for each rep as the result is read in, so the live panel fills up. */
   onRep?: (rep: RepResult) => void;
   signal?: AbortSignal;
@@ -37,51 +44,57 @@ export class NoServerError extends Error {}
 
 export async function analyzeSquatVideo(
   source: { kind: 'upload'; uri: string } | { kind: 'demo' },
-  { onProgress, onRep, signal }: AnalyzeCallbacks = {}
+  { onProgress, onRep, signal, squatVariation = 'standard' }: AnalyzeCallbacks & { squatVariation?: SquatVariation } = {}
 ): Promise<AnalysisResult> {
-  const [upload, pose, fatigue, annotate, reading] = ANALYSIS_STAGES;
-  const serverStage: Record<ServerStage, (typeof ANALYSIS_STAGES)[number]> = { pose, fatigue, render: annotate };
-  // Never let the number go backwards (e.g. upload progress events arriving late).
-  let shown = 0;
-  const report = (fraction: number, stage: (typeof ANALYSIS_STAGES)[number]) => {
-    shown = Math.max(shown, fraction);
-    onProgress?.(shown, stage);
-  };
+  const [upload, pose, , , loading] = ANALYSIS_STAGES;
   let result: AnalysisResult;
 
   if (source.kind === 'demo') {
-    // Bundled result: step through the same stages so the screen behaves like a real run.
-    for (let k = 0; k <= 10; k++) {
-      report(lerp(UPLOAD_SHARE, k / 10), upload);
-      await wait(40, signal);
-    }
-    for (let k = 0; k <= 40; k++) {
-      const f = k / 40;
-      report(lerp(SERVER_SHARE, f), f < 0.8 ? pose : f < 0.82 ? fatigue : annotate);
-      await wait(40, signal);
-    }
+    onProgress?.(0.1, upload);
+    await wait(500, signal);
+    onProgress?.(0.4, pose);
+    await wait(700, signal);
     result = DEMO_RESULT;
   } else {
     if (!hasApi) throw new NoServerError();
-    report(0, upload);
-    result = await uploadAndAnalyze(source.uri, {
-      signal,
-      onUploadProgress: (f) => report(lerp(UPLOAD_SHARE, f), upload),
-      onServerProgress: (f, stage) => report(lerp(SERVER_SHARE, f), serverStage[stage]),
-    });
+    onProgress?.(0, upload);
+    // Some phones never fire upload-progress events, so creep slowly while uploading;
+    // real events (and the server's own progress afterwards) take over as soon as they arrive.
+    let uploadShown = 0;
+    let uploading = true;
+    const creep = setInterval(() => {
+      if (!uploading) return;
+      uploadShown = Math.min(UPLOAD_END * 0.8, uploadShown + 0.005);
+      onProgress?.(uploadShown, upload);
+    }, 400);
+    try {
+      result = await uploadAndAnalyze(source.uri, {
+        signal,
+        squatVariation,
+        onUploadProgress: (f) => {
+          uploadShown = Math.max(uploadShown, UPLOAD_END * f);
+          onProgress?.(uploadShown, upload);
+          if (f >= 1) uploading = false;
+        },
+        onServerProgress: (f, stage) => {
+          uploading = false;
+          onProgress?.(UPLOAD_END + (SERVER_END - UPLOAD_END) * f, SERVER_STAGE[stage]);
+        },
+      });
+    } finally {
+      clearInterval(creep);
+    }
   }
 
-  // The server returns the reps all at once; read them in one by one so the live panel
-  // shows them arriving.
-  const n = Math.max(1, result.reps.length);
-  const step = Math.min(120, 2500 / n);
+  // The server returns everything at once; read the reps in one by one so the
+  // live panel shows them arriving.
+  const step = Math.min(120, 2500 / Math.max(1, result.reps.length));
   for (let k = 0; k < result.reps.length; k++) {
-    report(lerp(READING_SHARE, (k + 1) / n), reading);
+    onProgress?.(SERVER_END + (1 - SERVER_END) * 0.9 * (k / result.reps.length), loading);
     onRep?.(result.reps[k]);
     await wait(step, signal);
   }
-  report(1, reading);
-  await wait(300, signal);
+  onProgress?.(1, loading);
   return result;
 }
 

@@ -1,32 +1,25 @@
 import { useRouter } from 'expo-router';
 import { Pressable, Share, StyleSheet, View } from 'react-native';
 
+import { LineChart } from '@/components/charts';
 import { ThemedText } from '@/components/themed-text';
 import { Card, Icon } from '@/components/ui-kit';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import type { CheckIn, Report } from '@/lib/squat-types';
+import type { AnalysisResult, CheckIn, Report } from '@/lib/squat-types';
 
-const BANNER: Record<Report['status'], { title: string; body: string }> = {
-  'under-reporting': {
-    title: 'Possible under-reporting',
-    body: 'Your movement showed more fatigue than the effort you reported.',
-  },
-  'over-reporting': {
-    title: 'Possible over-reporting',
-    body: 'You reported more effort than your movement showed.',
-  },
-  consistent: {
-    title: 'Consistent',
-    body: 'Reported effort matches the measured fatigue.',
-  },
+// Status labels only; the explanation under them is written by Gemini (report.summary).
+// The check compares the rating with the late set (last 3 reps), so the labels say so.
+const BANNER_TITLE: Record<Report['status'], string> = {
+  'under-reporting': 'Possible late-set under-reporting',
+  'over-reporting': 'Possible late-set over-reporting',
+  consistent: 'Consistent',
 };
 
-/** README §9 Report: mismatch banner, escalation line, Athlete / Coach / Trainer messages. */
-export function ReportView({ report, checkIn }: { report: Report; checkIn?: CheckIn }) {
+/** Mismatch banner, pain escalation, and Gemini's Athlete / Coach / Trainer messages. */
+export function ReportView({ report, checkIn, result }: { report: Report; checkIn?: CheckIn; result?: AnalysisResult }) {
   const router = useRouter();
   const theme = useTheme();
-  const banner = BANNER[report.status];
   const flagged = report.status !== 'consistent';
 
   return (
@@ -34,12 +27,14 @@ export function ReportView({ report, checkIn }: { report: Report; checkIn?: Chec
       <View style={[styles.banner, { backgroundColor: flagged ? theme.accent : theme.backgroundSelected }]}>
         <Icon name={flagged ? 'warning' : 'check'} size={26} color={flagged ? theme.onAccent : theme.statusGreen} />
         <View style={styles.flex}>
-          <ThemedText style={[styles.bannerTitle, flagged && { color: theme.onAccent }]}>{banner.title}</ThemedText>
+          <ThemedText style={[styles.bannerTitle, flagged && { color: theme.onAccent }]}>{BANNER_TITLE[report.status]}</ThemedText>
           <ThemedText type="small" style={flagged ? { color: theme.onAccent } : undefined}>
-            {banner.body} Reported {report.reported_rpe}/10, expected about {report.expected_rpe}.
+            {report.summary ? `${report.summary} ` : ''}Reported {report.reported_rpe}/10, expected about {report.expected_rpe}.
           </ThemedText>
         </View>
       </View>
+
+      {result && <MeasuredVsReported result={result} report={report} />}
 
       {report.escalation && (
         <View style={[styles.escalation, { borderColor: theme.statusRed }]}>
@@ -51,9 +46,21 @@ export function ReportView({ report, checkIn }: { report: Report; checkIn?: Chec
         </View>
       )}
 
-      <MessageCard who="Athlete" text={report.messages.athlete} />
-      <MessageCard who="Coach" text={report.messages.coach} />
-      <MessageCard who="Athletic Trainer" text={report.messages.trainer} />
+      {report.messages ? (
+        <>
+          <MessageCard who="Athlete" text={report.messages.athlete} />
+          <MessageCard who="Coach" text={report.messages.coach} />
+          <MessageCard who="Athletic Trainer" text={report.messages.trainer} />
+        </>
+      ) : (
+        <Card>
+          <ThemedText type="smallBold">Gemini explanation unavailable</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            {report.unavailable_reason ?? 'Gemini could not be reached.'} The measured result and any pain referral above
+            still apply.
+          </ThemedText>
+        </Card>
+      )}
 
       <Pressable
         onPress={() => router.push('/resources')}
@@ -67,10 +74,42 @@ export function ReportView({ report, checkIn }: { report: Report; checkIn?: Chec
       </Pressable>
 
       <ThemedText type="small" themeColor="textSecondary">
-        {report.source === 'api' ? 'Messages written by the BreakPoint server.' : 'Messages from the built-in templates (server not used).'}{' '}
+        {report.source === 'gemini'
+          ? 'Messages written by Gemini from your measured movement and check-in.'
+          : report.source === 'sample'
+            ? 'Sample data for the demo roster, not a real check-in.'
+            : ''}{' '}
         This is a screening aid that flags for human review. It is not a diagnosis.
       </ThemedText>
     </View>
+  );
+}
+
+/** Measured fatigue per rep against the athlete's own rating, on the same 0-100 scale. */
+function MeasuredVsReported({ result, report }: { result: AnalysisResult; report: Report }) {
+  const scored = result.reps.filter((r) => r.scored !== false);
+  if (scored.length < 2) return null;
+  const late = scored.slice(-3);
+  return (
+    <Card>
+      <ThemedText type="smallBold">Measured vs. reported</ThemedText>
+      <LineChart
+        points={scored.map((r) => ({ x: r.i, y: r.rfi, label: `Rep ${r.i} · measured fatigue ${Math.round(r.rfi)}` }))}
+        formatY={(v) => `${Math.round(v)}`}
+        formatX={(v) => `${Math.round(v)}`}
+        yDomain={[0, 100]}
+        referenceY={{ y: report.reported_rpe * 10, label: `You reported ${report.reported_rpe}/10` }}
+        markerX={late[0].i}
+        markerLabel="Late set"
+        xLabel="Rep number"
+        yLabel="Fatigue (0-100)"
+        height={190}
+      />
+      <ThemedText type="small" themeColor="textSecondary">
+        Line: measured fatigue for each rep. Dashed line: your exhaustion rating, scaled to the same 0-100 range. The check
+        compares your rating with the shaded late-set reps (expected about {report.expected_rpe}/10).
+      </ThemedText>
+    </Card>
   );
 }
 

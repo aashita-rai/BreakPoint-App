@@ -52,8 +52,8 @@ def ffmpeg_exe():
         sys.exit("ffmpeg not found. Install ffmpeg or `pip install imageio-ffmpeg`.")
 
 
-def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
-    """on_progress(fraction) is called after every frame written, fraction 0-1."""
+def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, progress=None):
+    """progress(fraction 0-1) is called after each frame when given."""
     d = load_keypoints(kp_npz)
     kps, times = d["keypoints"], d["times"]
     reps = result["reps"]
@@ -62,6 +62,8 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
     for n, (i, t, frame) in enumerate(iter_frames(video, cfg["pose_fps"])):
         if n >= len(kps):
             break
+        if progress:
+            progress((n + 1) / len(kps))
         k = kps[n]
         for a, b in SKELETON:
             if k[a, 2] > min_conf and k[b, 2] > min_conf:
@@ -77,11 +79,11 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
         col = (255, 255, 255)
         s = max(0.6, frame.shape[1] / 1000)
         if cur is not None:
-            lines.append(f"rep {cur['i']}/{result['rep_count']}  tempo {cur['tempo_s']:.1f}s")
-            lines.append(
-                f"depth {cur['depth']:.2f}L  knee {cur['min_knee_angle']:.0f} deg  "
-                f"rise {cur['ascent_speed']:.2f}L/s"
-            )
+            label = {"top": "rest", "bottom": "bottom pause", "descent": "pause", "ascent": "STALL"}
+            extra = "".join(f" + {label[p['at']]} {p['s']:.1f}s" for p in cur.get("pauses", []))
+            lines.append(f"rep {cur['i']}/{result['rep_count']}  moving {cur['tempo_s']:.1f}s{extra}")
+            # The rep's minimum knee angle is not shown here: one frame must show one angle (the live one).
+            lines.append(f"depth {cur['depth']:.2f}L  rise {cur['ascent_speed']:.2f}L/s")
             if cur.get("scored", True) and cur["rfi"] is not None:
                 lines[1] += f"  RFI {cur['rfi']:.0f}"
                 col = COL[cur["status"]]
@@ -91,7 +93,8 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
             for warning in cur.get("form_warnings", []):
                 lines.append(f"cue: {warning[:72]}")
         angle_color = COL["red"] if cur and any("angle" in w.lower() for w in cur.get("form_warnings", [])) else (255, 255, 255)
-        draw_knee_angle(frame, k, result.get("side", "right"), angle_color, s)
+        if (result.get("view") or {}).get("side_view", True):   # front-view angles are not reliable
+            draw_knee_angle(frame, k, result.get("side", "right"), angle_color, s)
         line_height = int(25 * s)
         cv2.rectangle(frame, (0, 0), (frame.shape[1], line_height * len(lines) + int(10 * s)), (0, 0, 0), -1)
         for line_no, line in enumerate(lines):
@@ -100,8 +103,6 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
             fps = d["meta"]["fps"]
             writer = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame.shape[1], frame.shape[0]))
         writer.write(frame)
-        if on_progress:
-            on_progress(min(1.0, (n + 1) / len(kps)))
     writer.release()
     subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-i", tmp, "-c:v", "libx264", "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart", str(out_mp4)], check=True)

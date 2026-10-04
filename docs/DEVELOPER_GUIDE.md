@@ -4,6 +4,8 @@ How the app and server fit together: what happens to a squat video from the mome
 
 The [main README](../README.md) covers what the product is for, the RFI formula and how to run everything. This guide covers how the code works.
 
+> **Out of date in places.** This guide was written before the "add gemini" changes were merged. Since then, report and AI-analyzer text comes only from Gemini (the rule-based `templateReport` / `ruleInsights` fallbacks and `src/lib/insights.ts` were removed), and the server gained squat variations, pause detection and a weekly dashboard database. Sections 5, 6, 9 and 11 describe the older design; see [SYSTEM_DESIGN.md](../SYSTEM_DESIGN.md) for the current one.
+
 ## Contents
 
 1. [The big picture](#1-the-big-picture)

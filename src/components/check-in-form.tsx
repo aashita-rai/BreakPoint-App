@@ -1,6 +1,6 @@
 import Slider from '@react-native-community/slider';
 import { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { DictationField } from '@/components/dictation-field';
 import { ThemedText } from '@/components/themed-text';
@@ -8,10 +8,9 @@ import { Button, Card } from '@/components/ui-kit';
 import { Spacing } from '@/constants/theme';
 import { updateWorkout } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
-import { templateReport } from '@/lib/fatigue';
-import { ruleInsights } from '@/lib/insights';
-import { type CheckIn, PAIN_LOCATIONS, type PainLocation, type Workout } from '@/lib/squat-types';
-import { hasApi, requestInsights, requestReport } from '@/services/api';
+import { reportFromGemini, safetyOnlyReport } from '@/lib/fatigue';
+import { type CheckIn, type Insights, PAIN_LOCATIONS, type PainLocation, type Report, type Workout } from '@/lib/squat-types';
+import { hasApi, requestInsights } from '@/services/api';
 
 const EXHAUSTION_HINT = [
   '',
@@ -29,7 +28,7 @@ const EXHAUSTION_HINT = [
 
 /**
  * Post-workout check-in: the athlete's own words, exhaustion 1-10 and pain.
- * "Report to coach" saves it, runs the AI analyzer (server, with a rule-based fallback)
+ * "Report to coach" saves it and asks Gemini to explain the measured evidence.
  * and builds the athlete/coach/trainer report.
  */
 export function CheckInForm({
@@ -46,9 +45,10 @@ export function CheckInForm({
   const [exhaustion, setExhaustion] = useState(workout.checkIn?.rpe ?? 5);
   const [pain, setPain] = useState<boolean | null>(workout.checkIn?.pain ?? null);
   const [where, setWhere] = useState<PainLocation[]>(workout.checkIn?.pain_locations ?? []);
+  const [otherPain, setOtherPain] = useState(workout.checkIn?.pain_other ?? '');
   const [sending, setSending] = useState(false);
 
-  const ready = pain != null && (!pain || where.length > 0);
+  const ready = pain != null && (!pain || (where.length > 0 && (!where.includes('other') || otherPain.trim().length > 0)));
 
   const submit = async () => {
     if (!ready) return;
@@ -57,19 +57,21 @@ export function CheckInForm({
       rpe: exhaustion,
       pain,
       pain_locations: pain ? where : [],
+      pain_other: pain && where.includes('other') ? otherPain.trim() : '',
       notes: opinion.trim(),
       date: new Date().toISOString(),
     };
-    // The server may use an LLM, but deterministic templates remain the fallback.
-    const useServer = hasApi;
-    const [report, insights] = await Promise.all([
-      useServer
-        ? requestReport(workout.result, checkIn, athleteName).catch(() => templateReport(workout.result, checkIn, athleteName))
-        : templateReport(workout.result, checkIn, athleteName),
-      useServer
-        ? requestInsights(workout.result, checkIn, athleteName).catch(() => ruleInsights(workout.result, checkIn, athleteName))
-        : ruleInsights(workout.result, checkIn, athleteName),
-    ]);
+    // Gemini (via the server) writes all report text. If it fails, keep the deterministic flag and
+    // pain routing, and say why, rather than dropping the report.
+    let insights: Insights | undefined;
+    let report: Report;
+    try {
+      if (!hasApi) throw new Error('No analysis server is configured (EXPO_PUBLIC_API_URL).');
+      insights = await requestInsights(workout.result, checkIn, athleteName);
+      report = reportFromGemini(insights);
+    } catch (e) {
+      report = safetyOnlyReport(workout.result, checkIn, e instanceof Error ? e.message : 'Gemini is unavailable.');
+    }
     updateWorkout(workout.id, { checkIn, report, insights });
     setSending(false);
     onDone(workout.id);
@@ -80,12 +82,13 @@ export function CheckInForm({
       <Card>
         <ThemedText style={styles.question}>How did your workout go?</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          In your own words. Type, or tap the mic and talk.
+          In your own words. Type what happened.
         </ThemedText>
         <DictationField
           value={opinion}
           onChangeText={setOpinion}
           placeholder="e.g. “Felt strong, legs got heavy near the end”"
+          voiceEnabled={false}
         />
       </Card>
 
@@ -175,6 +178,15 @@ export function CheckInForm({
                 );
               })}
             </View>
+            {where.includes('other') && (
+              <TextInput
+                style={[styles.otherInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                placeholder="Describe the pain location"
+                placeholderTextColor={theme.textSecondary}
+                value={otherPain}
+                onChangeText={setOtherPain}
+              />
+            )}
           </>
         )}
       </Card>
@@ -245,5 +257,12 @@ const styles = StyleSheet.create({
   },
   center: {
     textAlign: 'center',
+  },
+  otherInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.two,
+    fontSize: 15,
   },
 });

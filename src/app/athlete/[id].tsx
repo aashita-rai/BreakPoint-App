@@ -111,7 +111,7 @@ export default function AthleteDetailScreen() {
                   <ThemedText style={styles.sectionTitle}>
                     Latest check-in · {formatDate(latestReported.date)}
                   </ThemedText>
-                  <ReportView report={latestReported.report} checkIn={latestReported.checkIn} />
+                  <ReportView report={latestReported.report} checkIn={latestReported.checkIn} result={latestReported.result} />
                 </>
               )}
 

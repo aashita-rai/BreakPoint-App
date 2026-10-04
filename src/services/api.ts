@@ -1,19 +1,16 @@
-import { ratingIssues } from '@/lib/insights';
-import type { AnalysisResult, CheckIn, Insights, Report } from '@/lib/squat-types';
+import type { AnalysisResult, CheckIn, Insights, MismatchStatus, SquatVariation } from '@/lib/squat-types';
 import { Platform } from 'react-native';
 
-// Thin client for the FastAPI server in code/api/ (README §9).
+// Thin client for the FastAPI server in code/api/main.py.
 // Start the app with EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 npx expo start -c
-//
 export const ENDPOINTS = {
   health: '/health',
-  analyze: '/analyze',
-  /** POST starts a background analysis; GET /analyze/jobs/{id} reports its progress. */
-  analyzeJobs: '/analyze/jobs',
-  report: '/report',
+  /** POST starts a background analysis and returns { job_id }; GET /analyze/jobs/{id} polls it. */
+  analysisJobs: '/analyze/jobs',
   // Added by server/breakpoint_extras.py:
   transcribe: '/transcribe',
   insights: '/insights',
+  weeklyDashboard: '/dashboard/weekly',
 } as const;
 const UPLOAD_FIELD = 'file';
 
@@ -21,6 +18,21 @@ export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '
 export const hasApi = API_URL.length > 0;
 
 export class ApiError extends Error {}
+
+export type WeeklyDashboard = {
+  days: number;
+  sets: number;
+  average_rfi: number | null;
+  follow_ups: number;
+  variations: Record<string, number>;
+};
+
+export async function requestWeeklyDashboard(): Promise<WeeklyDashboard> {
+  if (!hasApi) throw new ApiError('No server configured.');
+  const res = await fetch(`${API_URL}${ENDPOINTS.weeklyDashboard}`);
+  if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
+  return (await res.json()) as WeeklyDashboard;
+}
 
 export async function checkHealth(): Promise<boolean> {
   if (!hasApi) return false;
@@ -36,104 +48,86 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
-/** Server-side work while a video is analyzed, in the order it happens (code/api/main.py STAGES). */
-export type ServerStage = 'pose' | 'fatigue' | 'render';
+/** Server-side analysis stages reported by GET /analyze/jobs/{id}. */
+export type ServerStage = 'queued' | 'pose' | 'analysis' | 'render' | 'done';
 
-type AnalyzeOptions = {
-  onUploadProgress?: (fraction: number) => void;
-  /** fraction 0-1 of the server's work (pose model, fatigue maths, annotated video). */
-  onServerProgress?: (fraction: number, stage: ServerStage) => void;
-  signal?: AbortSignal;
+type JobStatus = {
+  status: 'queued' | 'running' | 'done' | 'error';
+  stage: ServerStage;
+  /** 0-1 across the server's work (pose, analysis, annotated-video render). */
+  progress: number;
+  result: Json | null;
+  error: string | null;
 };
 
-const JOB_POLL_MS = 400;
-
 /**
- * Uploads the video, then follows the server's background job so the app can show real
- * progress while the pose model runs. Falls back to the blocking POST /analyze on servers
- * without job routes, with an estimated progress so the number still moves.
+ * Uploads the video, then polls the server's background job until the pose model, analysis and
+ * annotated video are done. Polling keeps every request short, so progress is real and Cloudflare
+ * quick tunnels (which cut responses after ~100 s) never time out on long videos.
  */
-export async function uploadAndAnalyze(uri: string, opts: AnalyzeOptions = {}): Promise<AnalysisResult> {
-  if (!hasApi) throw new ApiError('No server configured.');
-  const { onUploadProgress, onServerProgress, signal } = opts;
-  const started = await postVideo(ENDPOINTS.analyzeJobs, uri, { onUploadProgress, signal });
-  if (started.status === 404 || started.status === 405) return analyzeBlocking(uri, opts);
-  if (started.status < 200 || started.status >= 300) throw serverError(started.status, started.body);
-  const jobId = started.body.job_id;
-  if (typeof jobId !== 'string') throw new ApiError('The server did not return a job id.');
-
-  onServerProgress?.(0, 'pose');
-  for (;;) {
-    await sleep(JOB_POLL_MS, signal);
-    let res: Response;
-    try {
-      res = await fetch(`${API_URL}${ENDPOINTS.analyzeJobs}/${jobId}`, { signal });
-    } catch {
-      if (signal?.aborted) throw new ApiError('aborted');
-      continue; // brief network hiccup: keep polling
-    }
-    const job = (await res.json().catch(() => ({}))) as Json;
-    if (!res.ok) throw serverError(res.status, job);
-    if (job.status === 'error') throw serverError(isNum(job.code) ? job.code : 500, { detail: job.error });
-    if (job.status === 'done') {
-      onServerProgress?.(1, 'render');
-      return normalizeResult(job.result as Json);
-    }
-    const stage = job.stage === 'fatigue' || job.stage === 'render' ? job.stage : 'pose';
-    onServerProgress?.(isNum(job.progress) ? job.progress : 0, stage);
-  }
-}
-
-/** Older servers: one request that returns when everything is done. Progress is estimated. */
-async function analyzeBlocking(uri: string, { onUploadProgress, onServerProgress, signal }: AnalyzeOptions) {
-  let timer: ReturnType<typeof setInterval> | undefined;
-  const startEstimate = () => {
-    if (timer) return;
-    const t0 = Date.now();
-    // Eases towards 95% (about 63% after 20 s) so the number keeps moving without hitting 100.
-    timer = setInterval(() => onServerProgress?.(0.95 * (1 - Math.exp(-(Date.now() - t0) / 20000)), 'pose'), 250);
-  };
-  try {
-    const res = await postVideo(ENDPOINTS.analyze, uri, {
-      signal,
-      onUploadProgress: (f) => {
-        onUploadProgress?.(f);
-        if (f >= 1) startEstimate();
-      },
-    });
-    if (res.status < 200 || res.status >= 300) throw serverError(res.status, res.body);
-    onServerProgress?.(1, 'render');
-    return normalizeResult(res.body);
-  } finally {
-    clearInterval(timer);
-  }
-}
-
-/** POSTs the video as multipart form data. Uses XMLHttpRequest because fetch can't report upload progress. */
-function postVideo(
-  path: string,
+export async function uploadAndAnalyze(
   uri: string,
-  { onUploadProgress, signal }: Pick<AnalyzeOptions, 'onUploadProgress' | 'signal'>
-): Promise<{ status: number; body: Json }> {
+  {
+    onUploadProgress,
+    onServerProgress,
+    signal,
+    squatVariation,
+  }: {
+    onUploadProgress?: (fraction: number) => void;
+    onServerProgress?: (fraction: number, stage: ServerStage) => void;
+    signal?: AbortSignal;
+    squatVariation?: SquatVariation;
+  } = {}
+): Promise<AnalysisResult> {
+  const jobId = await startAnalysisJob(uri, { onUploadProgress, signal, squatVariation });
+  let failures = 0;
+  for (;;) {
+    await sleep(800, signal);
+    let job: JobStatus;
+    try {
+      const res = await fetch(`${API_URL}${ENDPOINTS.analysisJobs}/${jobId}`, { signal });
+      if (!res.ok) throw new ApiError(await errorText(res));
+      job = (await res.json()) as JobStatus;
+      failures = 0;
+    } catch (e) {
+      if (signal?.aborted) throw new ApiError('aborted');
+      // Ride out brief network blips (phone Wi-Fi, tunnel reconnects) before giving up.
+      if (++failures >= 5) throw e instanceof ApiError ? e : new ApiError(`Lost contact with the server at ${API_URL}.`);
+      continue;
+    }
+    if (job.status === 'error') throw new ApiError(job.error ?? 'The server could not analyze this video.');
+    if (job.status === 'done' && job.result) return normalizeResult(job.result);
+    onServerProgress?.(isNum(job.progress) ? job.progress : 0, job.stage);
+  }
+}
+
+function startAnalysisJob(
+  uri: string,
+  { onUploadProgress, signal, squatVariation }: { onUploadProgress?: (fraction: number) => void; signal?: AbortSignal; squatVariation?: SquatVariation }
+): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (!hasApi) return reject(new ApiError('No server configured.'));
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}${path}`);
+    xhr.open('POST', `${API_URL}${ENDPOINTS.analysisJobs}`);
     xhr.responseType = 'text';
-    // Some platforms leave lengthComputable false even when the total is known.
     xhr.upload.onprogress = (e) => {
-      if (e.total > 0) onUploadProgress?.(Math.min(1, e.loaded / e.total));
+      if (e.lengthComputable && e.total > 0) onUploadProgress?.(e.loaded / e.total);
     };
-    xhr.upload.onload = () => onUploadProgress?.(1);
     xhr.onload = () => {
-      let body: Json = {};
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          return reject(new ApiError('The server sent a response the app could not read.'));
-        }
+      if (xhr.status === 404 || xhr.status === 405) {
+        return reject(new ApiError('This server has no /analyze/jobs route. Restart FastAPI so it picks up the latest code.'));
       }
-      resolve({ status: xhr.status, body });
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return reject(new ApiError(`Server error ${xhr.status}${detailOf(xhr.responseText)}`));
+      }
+      try {
+        const id = JSON.parse(xhr.responseText)?.job_id;
+        if (typeof id !== 'string') throw new Error();
+        onUploadProgress?.(1);
+        resolve(id);
+      } catch {
+        reject(new ApiError('The server sent a response the app could not read.'));
+      }
     };
     xhr.onerror = () => reject(new ApiError(`Could not reach the server at ${API_URL}.`));
     signal?.addEventListener('abort', () => {
@@ -142,6 +136,7 @@ function postVideo(
     });
 
     const form = new FormData();
+    form.append('squat_variation', squatVariation ?? 'standard');
     const name = uri.split('/').pop() || 'squats.mp4';
     if (Platform.OS === 'web') {
       // Browsers need a real Blob; the { uri, name, type } object only works on iOS/Android.
@@ -162,10 +157,18 @@ function postVideo(
   });
 }
 
-function serverError(status: number, body: Json) {
-  const d = body.detail;
-  const detail = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
-  return new ApiError(detail ? `Server error ${status}: ${detail}` : `Server error ${status}.`);
+function detailOf(text: string) {
+  try {
+    const d = JSON.parse(text)?.detail;
+    const msg = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
+    return msg ? `: ${msg}` : '.';
+  } catch {
+    return '.';
+  }
+}
+
+async function errorText(res: Response) {
+  return `Server error ${res.status}${detailOf(await res.text().catch(() => ''))}`;
 }
 
 function sleep(ms: number, signal?: AbortSignal) {
@@ -177,34 +180,6 @@ function sleep(ms: number, signal?: AbortSignal) {
       reject(new ApiError('aborted'));
     });
   });
-}
-
-/** Asks the server for the mismatch flag and the three messages (LLM with its own template fallback). */
-export async function requestReport(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Promise<Report> {
-  if (!hasApi) throw new ApiError('No server configured.');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(`${API_URL}${ENDPOINTS.report}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        result,
-        check_in: {
-          reported_rpe: checkIn.rpe,
-          pain: checkIn.pain,
-          pain_locations: checkIn.pain_locations,
-          notes: checkIn.notes,
-        },
-        athlete_name: athleteName,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
-    return normalizeReport(await res.json(), checkIn);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /** Sends a voice recording to the server (Whisper) and returns the text. */
@@ -226,10 +201,7 @@ export async function transcribeAudio(uri: string): Promise<string> {
   }
 }
 
-/**
- * AI analyzer: asks Gemini (on the server) whether the athlete's words and exhaustion rating
- * line up with the measured fatigue, and to explain the set.
- */
+/** AI analyzer: asks Gemini (on the server) to explain measured fatigue and the check-in. */
 export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Promise<Insights> {
   if (!hasApi) throw new ApiError('No server configured.');
   const controller = new AbortController();
@@ -245,16 +217,14 @@ export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, 
           opinion: checkIn.notes,
           pain: checkIn.pain,
           pain_locations: checkIn.pain_locations,
+          pain_other: checkIn.pain_other,
         },
         athlete_name: athleteName,
       }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
-    const insights = normalizeInsights(await res.json());
-    // The rating-vs-data rule is a floor: the AI can add a red flag but never clear one.
-    const issues = ratingIssues(result, checkIn);
-    return issues.length && insights.flag !== 'red' ? { ...insights, flag: 'red', flag_reason: issues.join(' ') } : insights;
+    if (!res.ok) throw new ApiError(await errorText(res));
+    return normalizeInsights(await res.json());
   } finally {
     clearTimeout(timer);
   }
@@ -264,24 +234,36 @@ export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, 
 
 function normalizeInsights(body: Json): Insights {
   const ok =
-    (body.flag === 'red' || body.flag === 'green' || body.flag === 'none') &&
+    (body.flag === 'red' || body.flag === 'none') &&
     typeof body.headline === 'string' &&
     Array.isArray(body.insights) &&
     typeof body.athlete_note === 'string' &&
-    typeof body.coach_note === 'string';
-  if (!ok) throw new ApiError('The insights response is missing fields.');
+    typeof body.coach_note === 'string' &&
+    typeof body.mismatch_summary === 'string' &&
+    isNum(body.expected_rpe) &&
+    isNum(body.reported_rpe) &&
+    (body.status === 'consistent' || body.status === 'under-reporting' || body.status === 'over-reporting');
+  if (!ok) throw new ApiError('The Gemini response is missing fields. Restart FastAPI so it picks up the latest code.');
   const sentiment = body.sentiment === 'positive' || body.sentiment === 'negative' ? body.sentiment : 'neutral';
+  // Green/red = does the self-report line up with the data? Red for the server's hidden-overwork
+  // flag, or when its deterministic check finds under- or over-reporting.
+  const red = body.flag === 'red' || body.status !== 'consistent';
+  const reason = typeof body.flag_reason === 'string' && body.flag_reason ? body.flag_reason : null;
   return {
-    // Older servers answer 'none' when there was no flag.
-    flag: body.flag === 'red' ? 'red' : 'green',
-    flag_reason: typeof body.flag_reason === 'string' ? body.flag_reason : null,
+    flag: red ? 'red' : 'green',
+    flag_reason: reason ?? (red ? (body.mismatch_summary as string) : null),
     sentiment,
     headline: body.headline as string,
     insights: (body.insights as unknown[]).filter((s): s is string => typeof s === 'string').slice(0, 4),
     athlete_note: body.athlete_note as string,
     coach_note: body.coach_note as string,
-    // The server falls back to its own rules if Gemini is unavailable.
-    source: body.source === 'rules' ? 'rules' : 'ai',
+    trainer_note: typeof body.trainer_note === 'string' ? body.trainer_note : body.coach_note as string,
+    status: body.status as MismatchStatus,
+    expected_rpe: body.expected_rpe as number,
+    reported_rpe: body.reported_rpe as number,
+    mismatch_summary: body.mismatch_summary as string,
+    escalation: typeof body.escalation === 'string' && body.escalation ? body.escalation : null,
+    source: 'ai',
   };
 }
 
@@ -320,21 +302,5 @@ function normalizeResult(body: Json): AnalysisResult {
     breakdown_rep: isNum(result.breakdown_rep) ? result.breakdown_rep : null,
     // Relative URLs are served by the same API.
     annotated_video_url: url ? (/^https?:\/\//.test(url) ? url : `${API_URL}/${url.replace(/^\/+/, '')}`) : null,
-  };
-}
-
-function normalizeReport(body: Json, checkIn: CheckIn): Report {
-  const messages = body.messages as Json | undefined;
-  const status = (body.status ?? body.mismatch) as Report['status'] | undefined;
-  if (!messages || typeof messages.athlete !== 'string' || typeof messages.coach !== 'string' || typeof messages.trainer !== 'string' || !status) {
-    throw new ApiError('The report response is missing messages or status.');
-  }
-  return {
-    status,
-    expected_rpe: isNum(body.expected_rpe) ? body.expected_rpe : 0,
-    reported_rpe: checkIn.rpe,
-    messages: { athlete: messages.athlete, coach: messages.coach, trainer: messages.trainer },
-    escalation: typeof body.escalation === 'string' ? body.escalation : null,
-    source: 'api',
   };
 }

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { HeaderLinks } from '@/components/header-links';
@@ -11,6 +11,7 @@ import { type Athlete, athletesIn, departmentLabel, session, useStore } from '@/
 import { useTheme } from '@/hooks/use-theme';
 import { rfiStatus, type Status, STATUS_LABEL } from '@/lib/fatigue';
 import { formatDate } from '@/lib/metrics';
+import { hasApi, requestWeeklyDashboard, type WeeklyDashboard } from '@/services/api';
 
 // README §9 Team tab: traffic-light list of athletes with tap-through to their charts.
 
@@ -46,6 +47,13 @@ export default function TeamScreen() {
   const store = useStore();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const [serverWeekly, setServerWeekly] = useState<WeeklyDashboard | null>(null);
+  const [weekStart] = useState(() => Date.now() - 7 * 86_400_000);
+
+  useEffect(() => {
+    if (!hasApi) return;
+    requestWeeklyDashboard().then(setServerWeekly).catch(() => setServerWeekly(null));
+  }, []);
 
   const roster = athletesIn(store, session.departmentId).sort((a, b) => lastName(a.name).localeCompare(lastName(b.name)));
   const needsFeedback = (a: Athlete) => a.workouts[0] != null && !store.feedback.some((f) => f.workoutId === a.workouts[0].id);
@@ -54,6 +62,14 @@ export default function TeamScreen() {
     return f.pain || !!f.mismatch || f.redFlag;
   };
   const redFlagged = roster.filter((a) => flags(a).redFlag);
+  const weeklyWorkouts = roster.flatMap((a) => a.workouts.filter((w) => Date.parse(w.date) >= weekStart));
+  const weeklyRfi = weeklyWorkouts.length
+    ? Math.round(weeklyWorkouts.reduce((sum, w) => sum + w.result.overall_rfi, 0) / weeklyWorkouts.length)
+    : null;
+  const weeklyFlags = weeklyWorkouts.filter((w) => w.insights?.flag === 'red' || w.checkIn?.pain || w.report?.status !== 'consistent').length;
+  const weeklySets = serverWeekly?.sets ?? weeklyWorkouts.length;
+  const weeklyAverageRfi = serverWeekly?.average_rfi ?? weeklyRfi;
+  const weeklyFollowUps = serverWeekly?.follow_ups ?? weeklyFlags;
 
   const q = query.trim().toLowerCase();
   const shown = roster.filter(
@@ -92,6 +108,18 @@ export default function TeamScreen() {
         </HeroHeader>
 
         <View style={styles.body}>
+          <Card>
+            <ThemedText type="smallBold">This week</ThemedText>
+            <View style={styles.weeklyStats}>
+              <WeeklyStat label="Sets" value={String(weeklySets)} />
+              <WeeklyStat label="Avg RFI" value={weeklyAverageRfi == null ? '–' : String(weeklyAverageRfi)} />
+              <WeeklyStat label="Follow-ups" value={String(weeklyFollowUps)} />
+            </View>
+            <ThemedText type="small" themeColor="textSecondary">
+              {serverWeekly ? 'Persisted by the local FastAPI database for the last 7 days.' : 'Based on workouts currently loaded in this session.'}
+            </ThemedText>
+          </Card>
+
           {redFlagged.length > 0 && (
             <Card style={{ borderColor: theme.statusRed, borderWidth: 2 }}>
               <View style={styles.alertTop}>
@@ -187,6 +215,15 @@ function Summary({ status, value }: { status: Status; value: number }) {
   );
 }
 
+function WeeklyStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.weeklyStat}>
+      <ThemedText style={styles.weeklyValue}>{value}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
+    </View>
+  );
+}
+
 function AthleteRow({ athlete }: { athlete: Athlete }) {
   const router = useRouter();
   const theme = useTheme();
@@ -248,6 +285,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 800,
     flex: 1,
+  },
+  weeklyStats: {
+    flexDirection: 'row',
+    gap: Spacing.four,
+    marginVertical: Spacing.two,
+  },
+  weeklyStat: {
+    minWidth: 72,
+  },
+  weeklyValue: {
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: 900,
   },
   alertRow: {
     flexDirection: 'row',

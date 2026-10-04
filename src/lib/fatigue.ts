@@ -1,11 +1,12 @@
 import { FATIGUE, STATUS_CUTOFFS } from '@/lib/config';
 import type {
-    AnalysisResult,
-    Baseline,
-    CheckIn,
-    MismatchStatus,
-    Report,
-    RepResult,
+  AnalysisResult,
+  Baseline,
+  CheckIn,
+  Insights,
+  MismatchStatus,
+  Report,
+  RepResult,
 } from '@/lib/squat-types';
 
 // TypeScript port of the README §3 maths (code/analysis/fatigue.py on the server).
@@ -83,7 +84,7 @@ export function rfiStatus(rfi: number): Status {
 
 export const STATUS_LABEL: Record<Status, string> = { green: 'Healthy', amber: 'Caution', red: 'Fatigued' };
 
-// ── Self-report mismatch + template messages (README §3, §9) ────────────────
+// ── Self-report mismatch and Gemini report assembly ─────────────────────────
 
 export function expectedRpe(overallRfi: number) {
   return Math.round(clip(overallRfi / 10, 1, 10) * 10) / 10;
@@ -94,47 +95,37 @@ export function mismatchStatus(reported: number, expected: number): MismatchStat
   return reported < expected ? 'under-reporting' : 'over-reporting';
 }
 
-const list = (xs: string[]) =>
-  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
-
-/**
- * Offline fallback for the server's message generator. Guardrails: never diagnose,
- * never say the athlete is fine, always point to a human when pain is reported, and
- * recommend emergency care for severe symptoms.
- */
-export function templateReport(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Report {
-  const expected = expectedRpe(result.overall_rfi);
-  const status = mismatchStatus(checkIn.rpe, expected);
-  const first = athleteName.split(' ')[0] || 'The athlete';
-  const breakdown = result.breakdown_rep ? `form broke down at rep ${result.breakdown_rep}` : 'no breakdown rep was detected';
-  const where = list(checkIn.pain_locations);
-  const painLine = checkIn.pain ? ` Pain reported${where ? ` (${where})` : ''}.` : ' No pain reported.';
-
-  const athlete = {
-    'under-reporting': `Your movement showed more fatigue (RFI ${result.overall_rfi}) than the effort you reported (${checkIn.rpe}/10). Being honest about tiredness helps your coaches keep you healthy and on the field. Consider telling your coach or athletic trainer how you feel.`,
-    'over-reporting': `You rated this set ${checkIn.rpe}/10, which is harder than your movement data suggested. Fatigue can also come from sleep, stress, illness or other training, so it's worth mentioning to your coach or athletic trainer.`,
-    consistent: `Your reported effort (${checkIn.rpe}/10) lines up with what your movement showed (RFI ${result.overall_rfi}). Keep checking in after each set so changes are easy to spot.`,
-  }[status];
-
-  const flag = {
-    'under-reporting': 'Possible under-reporting: measured fatigue is higher than reported effort.',
-    'over-reporting': 'Possible over-reporting: reported effort is higher than measured fatigue.',
-    consistent: 'Reported effort is consistent with measured fatigue.',
-  }[status];
-
-  const coach = `${first}: overall RFI ${result.overall_rfi}, ${breakdown}. Reported effort ${checkIn.rpe}/10 (expected about ${expected}). ${flag}${painLine} This is a screening flag for a conversation, not a diagnosis.`;
-  const trainer = `${athleteName} — squat set, ${result.reps.length} reps. Overall RFI ${result.overall_rfi}; ${breakdown}. Self-reported RPE ${checkIn.rpe}/10 vs expected ${expected}. ${flag}${painLine}${checkIn.notes ? ` Athlete note: "${checkIn.notes}".` : ''} Recommend follow-up as clinically appropriate.`;
-
-  const escalation = checkIn.pain
-    ? `Pain was reported${where ? ` in the ${where}` : ''}. Please talk to your athletic trainer or a doctor before your next session. If pain is severe or sudden, or comes with swelling, numbness, or you can't put weight on it, get urgent medical care.`
-    : null;
-
+/** Every sentence in the report comes from Gemini (POST /insights); the numbers come from the server's rule. */
+export function reportFromGemini(insights: Insights): Report {
   return {
-    status,
-    expected_rpe: expected,
-    reported_rpe: checkIn.rpe,
-    messages: { athlete, coach, trainer },
-    escalation,
-    source: 'template',
+    status: insights.status,
+    expected_rpe: insights.expected_rpe,
+    reported_rpe: insights.reported_rpe,
+    summary: insights.mismatch_summary,
+    messages: { athlete: insights.athlete_note, coach: insights.coach_note, trainer: insights.trainer_note },
+    escalation: insights.escalation,
+    source: 'gemini',
   };
 }
+
+/**
+ * Used only when Gemini can't be reached. Keeps the deterministic mismatch flag and, if pain was
+ * reported, a referral to a person: a pain report must never disappear because an AI call failed.
+ */
+const PAIN_SAFETY_FALLBACK =
+  'Please talk to your athletic trainer or a doctor before training again. Get urgent care if the pain is severe or sudden, or comes with swelling, numbness, or not being able to bear weight.';
+
+export function safetyOnlyReport(result: AnalysisResult, checkIn: CheckIn, reason: string): Report {
+  const expected = expectedRpe(result.overall_rfi);
+  return {
+    status: mismatchStatus(checkIn.rpe, expected),
+    expected_rpe: expected,
+    reported_rpe: checkIn.rpe,
+    summary: null,
+    messages: null,
+    escalation: checkIn.pain ? PAIN_SAFETY_FALLBACK : null,
+    source: 'safety-only',
+    unavailable_reason: reason,
+  };
+}
+

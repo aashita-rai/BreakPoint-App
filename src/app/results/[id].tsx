@@ -13,8 +13,18 @@ import { findWorkout, isStaff, useStore } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
 import { STATUS_CUTOFFS } from '@/lib/config';
 import { rfiStatus } from '@/lib/fatigue';
+import type { RepResult } from '@/lib/squat-types';
 import { DEPTH_UNIT, formatClock, formatDate, formatDepth, formatSpeed, SPEED_UNIT } from '@/lib/metrics';
 import { DEMO_VIDEO } from '@/services/squat-analysis';
+
+/** e.g. "\n+1.6 rest" under the tempo in the rep table; "stall" wins if the rep stalled on the way up. */
+function pauseTag(rep: RepResult) {
+  const pauses = rep.pauses ?? [];
+  if (!pauses.length) return '';
+  const total = pauses.reduce((t, p) => t + p.s, 0).toFixed(1);
+  const kind = pauses.some((p) => p.at === 'ascent') ? 'stall' : pauses.every((p) => p.at === 'top') ? 'rest' : 'pause';
+  return `\n+${total} ${kind}`;
+}
 
 export default function ResultsScreen() {
   const router = useRouter();
@@ -44,6 +54,15 @@ export default function ResultsScreen() {
   const breakdown = r.breakdown_rep ? r.reps.find((x) => x.i === r.breakdown_rep) : undefined;
   const isDemo = workout.title.startsWith('Demo');
   const videoSource = r.annotated_video_url ?? (isDemo ? DEMO_VIDEO : null) ?? workout.videoUri ?? null;
+  // Knee angles only when the camera was side-on and the value fits the measured depth (server-checked).
+  const angleReps = r.reps.filter((rep) => rep.knee_angle_ok === true);
+  const PAUSE_WHERE = { top: 'resting while standing', bottom: 'at the bottom', descent: 'on the way down', ascent: 'stalled on the way up' } as const;
+  const pauseNotes = r.reps.flatMap((rep) =>
+    (rep.pauses ?? []).map((p) => {
+      const counted = p.at !== 'top' && (rep.fatigue_pause_s ?? 0) > 0;
+      return `Rep ${rep.i}: ${p.s.toFixed(1)} s ${PAUSE_WHERE[p.at]} (${counted ? 'counted as possible fatigue' : 'not counted'})`;
+    })
+  );
   const point = (y: (rep: (typeof r.reps)[number]) => number) =>
     r.reps.map((rep) => ({ x: rep.i, y: y(rep), label: `Rep ${rep.i} · ${formatClock(rep.start_t)}` }));
 
@@ -65,7 +84,7 @@ export default function ResultsScreen() {
             <Card style={{ borderColor: theme.statusAmber, borderWidth: 1 }}>
               <ThemedText type="smallBold">Video quality note</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                {r.quality.usable ? 'The result is usable, but some tracking was uncertain.' : 'Retake this set with your whole body visible and the phone steady.'}
+                {r.quality.usable ? 'Notes about this recording:' : 'Retake this set from the side, with your whole body visible and the phone steady.'}
               </ThemedText>
               {r.quality.warnings.map((warning) => (
                 <ThemedText key={warning} type="small" themeColor="textSecondary">
@@ -79,19 +98,19 @@ export default function ResultsScreen() {
             <Icon name="flame" size={26} color={theme.onAccent} />
             <View style={styles.flex}>
               <ThemedText style={[styles.bannerTitle, { color: theme.onAccent }]}>
-                {breakdown ? `Breakdown at rep ${breakdown.i} · ${formatClock(breakdown.start_t)}` : 'No breakdown rep'}
+                {breakdown ? `Sustained breakdown at rep ${breakdown.i} · ${formatClock(breakdown.start_t)}` : 'No sustained breakdown'}
               </ThemedText>
               <ThemedText type="small" style={{ color: theme.onAccent }}>
                 {breakdown
                   ? 'From this rep on, the fatigue index stayed high: reps got slower, shallower or rose more slowly than your first reps.'
-                  : 'Tempo, depth and rep speed stayed close to your first reps for the whole set.'}
+                  : 'No two consecutive reps crossed the breakdown threshold. Some fatigue may still be present without a sustained breakdown.'}
               </ThemedText>
             </View>
           </View>
 
           <View style={styles.tiles}>
             <StatTile label="Reps counted" value={String(r.reps.length)} />
-            <StatTile label="Breakdown rep" value={r.breakdown_rep ? `#${r.breakdown_rep}` : 'None'} />
+            <StatTile label="Breakdown rep" value={r.breakdown_rep ? `#${r.breakdown_rep}` : 'No sustained breakdown'} />
             <View style={[styles.rfiTile, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <ThemedText type="small" themeColor="textSecondary">
                 Overall fatigue index
@@ -110,17 +129,24 @@ export default function ResultsScreen() {
           {workout.insights && <InsightsView insights={workout.insights} audience={staff ? 'staff' : 'athlete'} />}
 
           <Card>
-            <ThemedText style={styles.cardTitle}>Rep tempo</ThemedText>
+            <ThemedText style={styles.cardTitle}>Rep tempo (moving time)</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              Seconds per rep. Rising means you&apos;re slowing down. Your baseline: {r.baseline.tempo_s.toFixed(1)} s.
+              Seconds spent moving down and up. Pauses are judged by where they happen: resting while standing never counts;
+              stalling on the way up, or pausing at the bottom longer than in your first reps, counts as possible fatigue (bottom
+              pauses never count in a pause squat). Your baseline: {r.baseline.tempo_s.toFixed(1)} s.
             </ThemedText>
+            {pauseNotes.map((note) => (
+              <ThemedText key={note} type="small" themeColor="textSecondary">
+                • {note}
+              </ThemedText>
+            ))}
             <LineChart
               points={point((rep) => rep.tempo_s)}
               formatY={(v) => `${v.toFixed(1)}s`}
               formatX={(v) => `${Math.round(v)}`}
               markerX={r.breakdown_rep}
               xLabel="Rep number"
-              yLabel="Seconds per rep"
+              yLabel="Moving seconds"
             />
           </Card>
 
@@ -162,11 +188,24 @@ export default function ResultsScreen() {
               Secondary measurements from the pose track. They add context to depth and speed; they are not clinical measurements.
             </ThemedText>
             <View style={styles.detailGrid}>
-              <StatTile label="Baseline knee angle" value={`${r.reps.length ? Math.round(r.reps[0].min_knee_angle) : '–'}°`} />
-              <StatTile label="Deepest knee angle" value={`${r.reps.length ? Math.round(Math.min(...r.reps.map((rep) => rep.min_knee_angle))) : '–'}°`} />
+              {angleReps.length > 0 && (
+                <>
+                  <StatTile label="First knee angle" value={`${Math.round(angleReps[0].min_knee_angle)}°`} />
+                  <StatTile label="Deepest knee angle" value={`${Math.round(Math.min(...angleReps.map((rep) => rep.min_knee_angle)))}°`} />
+                </>
+              )}
               <StatTile label="Peak rise speed" value={`${r.reps.length ? Math.max(...r.reps.map((rep) => rep.peak_ascent_speed)).toFixed(2) : '–'} L/s`} />
               <StatTile label="Bottom hip / knee" value={r.reps.length ? r.reps[r.reps.length - 1].hip_below_knee.toFixed(2) : '–'} />
             </View>
+            {angleReps.length < r.reps.length && (
+              <ThemedText type="small" themeColor="textSecondary">
+                {r.view && !r.view.side_view
+                  ? 'Knee angles are hidden because the camera wasn\'t side-on. Film from the side to see them.'
+                  : angleReps.length === 0
+                    ? 'Knee angles are hidden for this set because they didn\'t match the measured depth.'
+                    : 'Some knee angles are hidden because they didn\'t match the measured depth.'}
+              </ThemedText>
+            )}
           </Card>
 
           <Card>
@@ -185,12 +224,13 @@ export default function ResultsScreen() {
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
                   {rep.tempo_s.toFixed(1)}s
+                  {pauseTag(rep)}
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
                   {formatDepth(rep.depth)}
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
-                  {Math.round(rep.min_knee_angle)}°
+                  {rep.knee_angle_ok ? `${Math.round(rep.min_knee_angle)}°` : '–'}
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
                   {formatSpeed(rep.ascent_speed)}
@@ -201,7 +241,8 @@ export default function ResultsScreen() {
               </View>
             ))}
             <ThemedText type="small" themeColor="textSecondary">
-              Depth in {DEPTH_UNIT}, speed in {SPEED_UNIT}. Status comes from the rep&apos;s fatigue index: Healthy below {STATUS_CUTOFFS.amber}, Caution from {STATUS_CUTOFFS.amber}, Fatigued from {STATUS_CUTOFFS.red}. Model: {r.model}.
+              Depth in {DEPTH_UNIT}, speed in {SPEED_UNIT}. Status comes from the rep&apos;s fatigue index: Healthy below {STATUS_CUTOFFS.amber}, Caution from {STATUS_CUTOFFS.amber}, Fatigued from {STATUS_CUTOFFS.red}. Tempo is moving time; pauses are listed by where they happened. An angle shows
+              &quot;–&quot; when it isn&apos;t reliable.{staff ? ` Model: ${r.model}.` : ''}
             </ThemedText>
           </Card>
 
@@ -209,7 +250,7 @@ export default function ResultsScreen() {
             staff ? (
               <>
                 <ThemedText style={styles.sectionTitle}>Athlete check-in</ThemedText>
-                <ReportView report={workout.report} checkIn={workout.checkIn} />
+                <ReportView report={workout.report} checkIn={workout.checkIn} result={workout.result} />
               </>
             ) : (
               <Button

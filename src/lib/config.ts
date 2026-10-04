@@ -2,7 +2,6 @@
 // The server's numbers always win: the app only uses these for offline fallback calculations
 // and to colour traffic lights and drive the offline message templates.
 // Values are illustrative, tuned on one video, and not clinically validated.
-// TODO: copy breakdownThreshold and the status cutoffs from code/config.yaml.
 
 export const FATIGUE = {
   /** Baseline = median of the first N clean reps. */
@@ -13,7 +12,7 @@ export const FATIGUE = {
   /** Rolling-median window for smoothing RFI. */
   smoothReps: 3,
   /** Breakdown rep = first rep where RFI stays above this for `breakdownRun` reps. */
-  breakdownThreshold: 50,
+  breakdownThreshold: 40,
   breakdownRun: 2,
   /** |reported_RPE - expected_RPE| at or above this raises a mismatch flag. */
   mismatchGap: 3,
@@ -26,5 +25,9 @@ export const FATIGUE = {
  */
 export const HIDDEN_OVERWORK = { minRfi: 50, maxExhaustion: 3 } as const;
 
-/** Traffic-light cutoffs on RFI: below `amber` = Healthy, below `red` = Caution, else Fatigued. */
+/**
+ * Traffic-light cutoffs on RFI: below `amber` = Healthy, below `red` = Caution, else Fatigued.
+ * Must match green_below / amber_below in code/config.yaml (the video overlay colours).
+ * PROVISIONAL demo values, not calibrated on athlete data.
+ */
 export const STATUS_CUTOFFS = { amber: 35, red: 60 } as const;

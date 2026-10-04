@@ -50,6 +50,14 @@ analysis:
     max_rep_s: 8.0
     min_depth: 0.20
     stand_tol: 0.25         # rep boundaries must return within this of standing
+    pause_speed: 0.10       # |hip speed| below this (leg-lengths/s) is a pause, excluded from tempo and ascent time.
+                            # 0.05 let slow drift during a hold count as movement (rep 4 of our 5-rep clip: RFI 42 vs 19).
+    min_pause_s: 0.30       # still stretches shorter than this are the normal turnaround at the bottom, not a pause
+  view:
+    # Knee angle is only shown for a side view. Shoulder width / torso length is ~0.1-0.2 from the side
+    # and ~0.8-1.0 from the front (measured on our own clips); above this the angle is hidden.
+    max_shoulder_torso_ratio: 0.45
+    min_frames: 15            # need this many frames with both shoulders and hips visible to decide
   fatigue:
     baseline_reps: 3
     cap: 0.30
@@ -57,8 +65,10 @@ analysis:
     smooth_reps: 3
     breakdown_threshold: 40
     breakdown_consecutive: 2
-    green_below: 25
-    amber_below: 40
+    # Traffic lights, shared with the app (src/lib/config.ts STATUS_CUTOFFS). PROVISIONAL: chosen for the demo,
+    # not calibrated on athlete data. Re-derive both from real data before relying on them.
+    green_below: 35
+    amber_below: 60
   mismatch_threshold: 3
 
 # ---- validation -----------------------------------------------------------

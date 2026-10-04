@@ -1,12 +1,13 @@
-import { computeFatigue, expectedRpe, type RawRep, templateReport } from '@/lib/fatigue';
-import { ruleInsights } from '@/lib/insights';
-import { type CheckIn, PAIN_LOCATIONS, type Workout } from '@/lib/squat-types';
+import { FATIGUE, HIDDEN_OVERWORK } from '@/lib/config';
+import { computeFatigue, expectedRpe, mismatchStatus, type RawRep } from '@/lib/fatigue';
+import { type AnalysisResult, type CheckIn, type Insights, PAIN_LOCATIONS, type Report, type Workout } from '@/lib/squat-types';
 
 // Sample squat sets for the pre-filled roster, so the coach/AT dashboard shows a realistic
 // spread of fatigue levels, flags and workout counts before anyone uploads.
-// Each set's RFI comes from the app's own fatigue maths (lib/fatigue.ts), and its report and
-// red/green flag from the same rules used for real check-ins (lib/insights.ts), so every
-// number on the dashboard is consistent with the rest of the app.
+// Each set's RFI comes from the app's own fatigue maths (lib/fatigue.ts), and its red/green flag
+// from the same deterministic self-report check the server applies to real check-ins, so every
+// number on the dashboard is consistent with the rest of the app. The wording is short sample
+// text, labelled as sample data in the app, never presented as Gemini output.
 // Seeded by athlete id, so each athlete gets the same history on every launch.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -96,6 +97,52 @@ function sampleCheckIn(rand: () => number, overallRfi: number, date: string): Ch
   };
 }
 
+const PAIN_REFERRAL =
+  'Please talk to your athletic trainer or a doctor before training again. Get urgent care if the pain is severe or sudden, or comes with swelling, numbness, or not being able to bear weight.';
+
+/** Report and red/green flag for a sample check-in, from the same rules as real check-ins. */
+function sampleFeedback(result: AnalysisResult, checkIn: CheckIn, athleteName: string): { report: Report; insights: Insights } {
+  const first = athleteName.split(' ')[0];
+  const rfi = result.overall_rfi;
+  const expected = expectedRpe(rfi);
+  const status = mismatchStatus(checkIn.rpe, expected);
+  const hidden = rfi > HIDDEN_OVERWORK.minRfi && (checkIn.rpe <= HIDDEN_OVERWORK.maxExhaustion || expected - checkIn.rpe >= FATIGUE.mismatchGap);
+  const red = hidden || status !== 'consistent';
+  const breakdown = result.breakdown_rep ? `form faded from rep ${result.breakdown_rep}` : 'no breakdown rep';
+  const summary = {
+    consistent: `Rated exhaustion ${checkIn.rpe}/10, close to the ${expected}/10 the movement data suggests (RFI ${rfi}).`,
+    'under-reporting': `Rated exhaustion ${checkIn.rpe}/10, but the movement data suggests about ${expected}/10 (RFI ${rfi}).`,
+    'over-reporting': `Rated exhaustion ${checkIn.rpe}/10, but the movement data shows less fatigue (RFI ${rfi}, about ${expected}/10).`,
+  }[status];
+  const escalation = checkIn.pain ? PAIN_REFERRAL : null;
+  const messages = {
+    athlete: red
+      ? `Your check-in and your movement data tell different stories (${breakdown}). It's worth telling your coach or athletic trainer how you feel.`
+      : `Your check-in lines up with your movement data (${breakdown}). Keep checking in after each set.`,
+    coach: `${first}: RFI ${rfi}, ${breakdown}, exhaustion ${checkIn.rpe}/10. ${red ? 'Worth a quick conversation.' : 'Check-in lines up with the data.'} A screening aid, not a diagnosis.`,
+    trainer: `${athleteName}: ${result.reps.length} reps, RFI ${rfi}, ${breakdown}. Reported ${checkIn.rpe}/10 vs expected ${expected}/10.${checkIn.pain ? ` Pain reported (${checkIn.pain_locations.join(', ')}).` : ''}`,
+  };
+  return {
+    report: { status, expected_rpe: expected, reported_rpe: checkIn.rpe, summary, messages, escalation, source: 'sample' },
+    insights: {
+      flag: red ? 'red' : 'green',
+      flag_reason: summary,
+      sentiment: 'neutral',
+      headline: hidden ? 'Possible hidden overwork' : red ? "Self-report doesn't match the data" : result.breakdown_rep ? `Fatigue built up from rep ${result.breakdown_rep}` : 'Steady set',
+      insights: [result.breakdown_rep ? `Tempo, depth or speed drifted from rep ${result.breakdown_rep} of ${result.reps.length}.` : `Tempo, depth and speed stayed close to the first reps for all ${result.reps.length} reps.`],
+      athlete_note: messages.athlete,
+      coach_note: messages.coach,
+      trainer_note: messages.trainer,
+      status,
+      expected_rpe: expected,
+      reported_rpe: checkIn.rpe,
+      mismatch_summary: summary,
+      escalation,
+      source: 'sample',
+    },
+  };
+}
+
 /** Newest first, like Athlete.workouts. Between 1 and 8 sets, a few days apart. */
 export function sampleWorkouts(athleteId: string, athleteName: string, now = Date.now()): Workout[] {
   const rand = seededRandom(athleteId);
@@ -121,8 +168,7 @@ export function sampleWorkouts(athleteId: string, athleteName: string, now = Dat
     if (k > 0 || rand() > 0.12) {
       const checkIn = sampleCheckIn(rand, result.overall_rfi, date);
       workout.checkIn = checkIn;
-      workout.report = templateReport(result, checkIn, athleteName);
-      workout.insights = ruleInsights(result, checkIn, athleteName);
+      Object.assign(workout, sampleFeedback(result, checkIn, athleteName));
     }
     workouts.push(workout);
     daysAgo += 2 + Math.floor(rand() * 4);
