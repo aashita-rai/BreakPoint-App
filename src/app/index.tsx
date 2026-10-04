@@ -70,7 +70,7 @@ export default function SignInScreen() {
       <View style={styles.hero}>
         <SafeAreaView edges={['top']} style={styles.heroInner}>
           <Image
-            source={require('@/assets/images/breakpoint-logo-full.png')}
+            source={require('@/assets/images/breakpoint-logo.png')}
             style={styles.logo}
             contentFit="contain"
             accessibilityLabel="BreakPoint logo"
@@ -167,9 +167,8 @@ const styles = StyleSheet.create({
   },
   // The logo artwork is 679 × 599 on white, so it sits in a rounded white tile on the blue hero.
   logo: {
-    width: 112,
-    height: 117,
-    borderRadius: 20,
+    width: 120,
+    height: 120,
   },
   brand: {
     color: '#FFFFFF',

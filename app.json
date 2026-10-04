@@ -37,7 +37,7 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#FFFFFF",
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/breakpoint-logo.png",
           "imageWidth": 180
         }
       ],
