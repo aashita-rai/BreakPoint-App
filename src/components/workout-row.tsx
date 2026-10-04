@@ -4,10 +4,11 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Card, Icon, StatusPill } from '@/components/ui-kit';
 import { Spacing } from '@/constants/theme';
+import { isStaff } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
 import { rfiStatus, STATUS_LABEL } from '@/lib/fatigue';
 import { formatDate } from '@/lib/metrics';
-import type { Workout } from '@/lib/squat-types';
+import type { Insights, Workout } from '@/lib/squat-types';
 
 /** One numbered entry in a "Most Recent Workouts" list. Opens the results screen. */
 export function WorkoutRow({ workout, number }: { workout: Workout; number: number }) {
@@ -26,9 +27,12 @@ export function WorkoutRow({ workout, number }: { workout: Workout; number: numb
             <ThemedText style={[styles.badgeText, { color: theme.onAccent }]}>{number}</ThemedText>
           </View>
           <View style={styles.text}>
-            <ThemedText type="smallBold" style={styles.title} numberOfLines={1}>
-              {workout.title}
-            </ThemedText>
+            <View style={styles.titleRow}>
+              <ThemedText type="smallBold" style={[styles.title, styles.flex]} numberOfLines={1}>
+                {workout.title}
+              </ThemedText>
+              {isStaff() && workout.insights && <FlagChip flag={workout.insights.flag} />}
+            </View>
             <ThemedText type="small" themeColor="textSecondary">
               {formatDate(workout.date)}
             </ThemedText>
@@ -36,7 +40,6 @@ export function WorkoutRow({ workout, number }: { workout: Workout; number: numb
               <StatusPill status={rfiStatus(overall_rfi)} label={`${STATUS_LABEL[rfiStatus(overall_rfi)]} · RFI ${overall_rfi}`} />
               <Chip text={`${reps.length} reps`} />
               <Chip text={breakdown_rep ? `Breakdown @ rep ${breakdown_rep}` : 'No breakdown'} highlight={!!breakdown_rep} />
-              {workout.insights?.flag === 'red' && <Chip text="Red flag: hidden fatigue" highlight />}
               {workout.checkIn?.pain && <Chip text="Pain reported" highlight />}
               {mismatch && <Chip text={workout.report?.status === 'under-reporting' ? 'Under-reported' : 'Over-reported'} highlight />}
             </View>
@@ -45,6 +48,23 @@ export function WorkoutRow({ workout, number }: { workout: Workout; number: numb
         </Card>
       )}
     </Pressable>
+  );
+}
+
+/** Coach/AT view: green when the athlete's check-in lines up with the movement data, red when it doesn't. */
+export function FlagChip({ flag }: { flag: Insights['flag'] }) {
+  const theme = useTheme();
+  const red = flag === 'red';
+  const color = red ? theme.statusRed : theme.statusGreen;
+  return (
+    <View
+      style={[styles.flagChip, { borderColor: color }]}
+      accessibilityLabel={red ? "Red flag: check-in doesn't match the data" : 'Green flag: check-in matches the data'}>
+      <Icon name="flag" size={12} color={color} />
+      <ThemedText type="smallBold" style={[styles.chipText, { color }]}>
+        {red ? 'Mismatch' : 'Lines up'}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -82,6 +102,23 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  flex: {
+    flex: 1,
+  },
+  flagChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
   chips: {
     flexDirection: 'row',

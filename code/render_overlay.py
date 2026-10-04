@@ -52,7 +52,8 @@ def ffmpeg_exe():
         sys.exit("ffmpeg not found. Install ffmpeg or `pip install imageio-ffmpeg`.")
 
 
-def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3):
+def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3, on_progress=None):
+    """on_progress(fraction) is called after every frame written, fraction 0-1."""
     d = load_keypoints(kp_npz)
     kps, times = d["keypoints"], d["times"]
     reps = result["reps"]
@@ -99,6 +100,8 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3):
             fps = d["meta"]["fps"]
             writer = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame.shape[1], frame.shape[0]))
         writer.write(frame)
+        if on_progress:
+            on_progress(min(1.0, (n + 1) / len(kps)))
     writer.release()
     subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-i", tmp, "-c:v", "libx264", "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart", str(out_mp4)], check=True)

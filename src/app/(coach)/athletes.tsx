@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native
 import { HeaderLinks } from '@/components/header-links';
 import { ThemedText } from '@/components/themed-text';
 import { Card, HeroHeader, Icon, StatusPill } from '@/components/ui-kit';
-import { Chip } from '@/components/workout-row';
+import { Chip, FlagChip } from '@/components/workout-row';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { type Athlete, athletesIn, departmentLabel, session, useStore } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
@@ -36,6 +36,7 @@ function flags(a: Athlete) {
     pain: !!w?.checkIn?.pain,
     mismatch: w?.report && w.report.status !== 'consistent' ? w.report.status : null,
     redFlag: w?.insights?.flag === 'red',
+    aiFlag: w?.insights?.flag ?? null,
   };
 }
 
@@ -100,8 +101,8 @@ export default function TeamScreen() {
                 </ThemedText>
               </View>
               <ThemedText type="small" themeColor="textSecondary">
-                These athletes reported low exhaustion, but their movement data shows high fatigue. They may be overworking without
-                realising it.
+                What these athletes said and how they rated their exhaustion doesn&apos;t line up with their movement data, for
+                example saying they weren&apos;t tired when the data shows they were.
               </ThemedText>
               {redFlagged.map((a) => (
                 <Pressable
@@ -186,18 +187,6 @@ function Summary({ status, value }: { status: Status; value: number }) {
   );
 }
 
-function RedFlagChip() {
-  const theme = useTheme();
-  return (
-    <View style={[styles.redChip, { borderColor: theme.statusRed }]}>
-      <Icon name="warning" size={12} color={theme.statusRed} />
-      <ThemedText type="smallBold" style={styles.redChipText}>
-        Red flag: hidden fatigue
-      </ThemedText>
-    </View>
-  );
-}
-
 function AthleteRow({ athlete }: { athlete: Athlete }) {
   const router = useRouter();
   const theme = useTheme();
@@ -229,7 +218,7 @@ function AthleteRow({ athlete }: { athlete: Athlete }) {
             {latest && status && (
               <View style={styles.chips}>
                 <StatusPill status={status} label={`${STATUS_LABEL[status]} · RFI ${latest.result.overall_rfi}`} />
-                {f.redFlag && <RedFlagChip />}
+                {f.aiFlag && <FlagChip flag={f.aiFlag} />}
                 {f.pain && <Chip text="Pain reported" highlight />}
                 {f.mismatch && <Chip text={f.mismatch === 'under-reporting' ? 'Under-reported' : 'Over-reported'} highlight />}
                 {!latest.checkIn && <Chip text="No check-in" />}
@@ -266,19 +255,6 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: Spacing.two,
-  },
-  redChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1.5,
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  redChipText: {
-    fontSize: 12,
-    lineHeight: 16,
   },
   summary: {
     flexDirection: 'row',

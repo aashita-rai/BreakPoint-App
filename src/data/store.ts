@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 
+import { sampleWorkouts } from '@/data/sample-workouts';
 import type { Workout } from '@/lib/squat-types';
 
 // App state is shared by the athlete, coach and trainer views. It is session-only;
-// uploaded workouts are not persisted after the app restarts.
+// uploaded workouts are not persisted after the app restarts. The football roster starts
+// with sample sets (data/sample-workouts.ts) so the staff dashboard has something to show.
 
 // ── Departments ─────────────────────────────────────────────────────────────
 
@@ -31,6 +33,49 @@ export const departmentLabel = (id: string) => {
   const d = DEPARTMENTS.find((x) => x.id === id);
   return d ? `${d.gender} ${d.sport}` : '';
 };
+
+// ── Demo roster ─────────────────────────────────────────────────────────────
+
+// Names from the 2026 Florida Gators football roster (positions as listed publicly).
+// Each starts with 1-8 sample sets; real uploads are added on top when that athlete signs in.
+const FOOTBALL_ROSTER: [string, string][] = [
+  ['Aaron Philo', 'QB'],
+  ['Tramell Jones Jr.', 'QB'],
+  ['Aaron Williams', 'QB'],
+  ['Will Griffin', 'QB'],
+  ['Aidan Warner', 'QB'],
+  ['Jadan Baugh', 'RB'],
+  ['Duke Clark', 'RB'],
+  ['Evan Pryor', 'RB'],
+  ['London Montgomery', 'RB'],
+  ['Anthony Rubio', 'RB'],
+  ['Byron Louis', 'RB'],
+  ['Brian Case', 'RB'],
+  ['Vernell Brown III', 'WR'],
+  ['Eric Singleton Jr.', 'WR'],
+  ['Bailey Stockton', 'WR'],
+  ['TJ Abrams', 'WR'],
+  ['Micah Mays Jr.', 'WR'],
+  ['Dallas Wilson', 'WR'],
+  ['Davian Groce', 'WR'],
+  ['Jaylen Lloyd', 'WR'],
+  ['Amir Jackson', 'TE'],
+  ['Luke Harpring', 'TE'],
+  ['Lacota Dippre', 'TE'],
+  ['Jayden Woods', 'JACK'],
+  ['Bryce Thornton', 'S'],
+  ['Lagonza Hayward', 'S'],
+  ['Brandon Rabasco', 'K'],
+  ['Liam Padron', 'K'],
+  ['Alec Clark', 'P'],
+  ['Carter Milliron', 'LS'],
+];
+
+const initialAthletes = (): Athlete[] =>
+  FOOTBALL_ROSTER.map(([name, detail]) => {
+    const id = `m-football-${name.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+    return { id, name, departmentId: 'm-football', detail, workouts: sampleWorkouts(id, name) };
+  });
 
 export type Athlete = {
   id: string;
@@ -65,7 +110,7 @@ type Store = Data & {
 };
 
 export const useStore = create<Store>()((set) => ({
-  athletes: [],
+  athletes: initialAthletes(),
   feedback: [],
   addWorkout: (athleteId, w) =>
     set((s) => ({

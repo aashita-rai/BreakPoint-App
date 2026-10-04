@@ -18,8 +18,10 @@ from pose_backends import make_backend
 from pose_backends.base import resolve_device
 
 
-def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend=None):
+def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend=None, on_progress=None):
+    """on_progress(fraction) is called after every frame, fraction 0-1 of the frames to process."""
     info = probe(video)
+    expected = expected_frames(info, cfg["pose_fps"], max_frames)
     own = backend is None
     if own:
         backend = make_backend(mcfg, cfg, device)
@@ -34,6 +36,8 @@ def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend
             k = backend.infer(frame)
             dts.append(time.perf_counter() - t0)
             kps.append(k); times.append(t); idxs.append(i)
+            if on_progress:
+                on_progress(min(1.0, (n + 1) / expected))
             if n % 200 == 0:
                 log(f"[{mcfg['name']}] frame {n} t={t:.1f}s")
     finally:
@@ -49,6 +53,14 @@ def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend
             "infer_fps": float(1.0 / dts.mean()), "size_mb": size, "degrade": kind,
             "native_indices": idxs}
     return np.stack(kps), np.array(times), meta
+
+
+def expected_frames(info, pose_fps, max_frames=None):
+    """How many frames iter_frames will yield (frame counts in containers are estimates)."""
+    n = info["n_frames"] or 1
+    if pose_fps and pose_fps < info["fps"]:
+        n = n * pose_fps / info["fps"]
+    return max(1, min(n, max_frames) if max_frames else n)
 
 
 def main():

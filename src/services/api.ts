@@ -1,14 +1,15 @@
+import { ratingIssues } from '@/lib/insights';
 import type { AnalysisResult, CheckIn, Insights, Report } from '@/lib/squat-types';
 import { Platform } from 'react-native';
 
 // Thin client for the FastAPI server in code/api/ (README §9).
 // Start the app with EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 npx expo start -c
 //
-// TODO: the README gives the JSON contract but not the route names. Check these three
-// paths and the form field name against code/api/main.py.
 export const ENDPOINTS = {
   health: '/health',
   analyze: '/analyze',
+  /** POST starts a background analysis; GET /analyze/jobs/{id} reports its progress. */
+  analyzeJobs: '/analyze/jobs',
   report: '/report',
   // Added by server/breakpoint_extras.py:
   transcribe: '/transcribe',
@@ -35,36 +36,104 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+/** Server-side work while a video is analyzed, in the order it happens (code/api/main.py STAGES). */
+export type ServerStage = 'pose' | 'fatigue' | 'render';
+
+type AnalyzeOptions = {
+  onUploadProgress?: (fraction: number) => void;
+  /** fraction 0-1 of the server's work (pose model, fatigue maths, annotated video). */
+  onServerProgress?: (fraction: number, stage: ServerStage) => void;
+  signal?: AbortSignal;
+};
+
+const JOB_POLL_MS = 400;
+
 /**
- * Uploads the video and waits for the server to run the pose model and analysis.
- * Uses XMLHttpRequest because fetch can't report upload progress.
+ * Uploads the video, then follows the server's background job so the app can show real
+ * progress while the pose model runs. Falls back to the blocking POST /analyze on servers
+ * without job routes, with an estimated progress so the number still moves.
  */
-export function uploadAndAnalyze(
+export async function uploadAndAnalyze(uri: string, opts: AnalyzeOptions = {}): Promise<AnalysisResult> {
+  if (!hasApi) throw new ApiError('No server configured.');
+  const { onUploadProgress, onServerProgress, signal } = opts;
+  const started = await postVideo(ENDPOINTS.analyzeJobs, uri, { onUploadProgress, signal });
+  if (started.status === 404 || started.status === 405) return analyzeBlocking(uri, opts);
+  if (started.status < 200 || started.status >= 300) throw serverError(started.status, started.body);
+  const jobId = started.body.job_id;
+  if (typeof jobId !== 'string') throw new ApiError('The server did not return a job id.');
+
+  onServerProgress?.(0, 'pose');
+  for (;;) {
+    await sleep(JOB_POLL_MS, signal);
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}${ENDPOINTS.analyzeJobs}/${jobId}`, { signal });
+    } catch {
+      if (signal?.aborted) throw new ApiError('aborted');
+      continue; // brief network hiccup: keep polling
+    }
+    const job = (await res.json().catch(() => ({}))) as Json;
+    if (!res.ok) throw serverError(res.status, job);
+    if (job.status === 'error') throw serverError(isNum(job.code) ? job.code : 500, { detail: job.error });
+    if (job.status === 'done') {
+      onServerProgress?.(1, 'render');
+      return normalizeResult(job.result as Json);
+    }
+    const stage = job.stage === 'fatigue' || job.stage === 'render' ? job.stage : 'pose';
+    onServerProgress?.(isNum(job.progress) ? job.progress : 0, stage);
+  }
+}
+
+/** Older servers: one request that returns when everything is done. Progress is estimated. */
+async function analyzeBlocking(uri: string, { onUploadProgress, onServerProgress, signal }: AnalyzeOptions) {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const startEstimate = () => {
+    if (timer) return;
+    const t0 = Date.now();
+    // Eases towards 95% (about 63% after 20 s) so the number keeps moving without hitting 100.
+    timer = setInterval(() => onServerProgress?.(0.95 * (1 - Math.exp(-(Date.now() - t0) / 20000)), 'pose'), 250);
+  };
+  try {
+    const res = await postVideo(ENDPOINTS.analyze, uri, {
+      signal,
+      onUploadProgress: (f) => {
+        onUploadProgress?.(f);
+        if (f >= 1) startEstimate();
+      },
+    });
+    if (res.status < 200 || res.status >= 300) throw serverError(res.status, res.body);
+    onServerProgress?.(1, 'render');
+    return normalizeResult(res.body);
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+/** POSTs the video as multipart form data. Uses XMLHttpRequest because fetch can't report upload progress. */
+function postVideo(
+  path: string,
   uri: string,
-  { onUploadProgress, signal }: { onUploadProgress?: (fraction: number) => void; signal?: AbortSignal } = {}
-): Promise<AnalysisResult> {
+  { onUploadProgress, signal }: Pick<AnalyzeOptions, 'onUploadProgress' | 'signal'>
+): Promise<{ status: number; body: Json }> {
   return new Promise((resolve, reject) => {
-    if (!hasApi) return reject(new ApiError('No server configured.'));
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}${ENDPOINTS.analyze}`);
+    xhr.open('POST', `${API_URL}${path}`);
     xhr.responseType = 'text';
+    // Some platforms leave lengthComputable false even when the total is known.
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onUploadProgress?.(e.loaded / e.total);
+      if (e.total > 0) onUploadProgress?.(Math.min(1, e.loaded / e.total));
     };
+    xhr.upload.onload = () => onUploadProgress?.(1);
     xhr.onload = () => {
-      if (xhr.status < 200 || xhr.status >= 300) {
-        let detail = '';
-        try {
-          const d = JSON.parse(xhr.responseText)?.detail;
-          detail = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
-        } catch {}
-        return reject(new ApiError(detail ? `Server error ${xhr.status}: ${detail}` : `Server error ${xhr.status}.`));
-      }
+      let body: Json = {};
       try {
-        resolve(normalizeResult(JSON.parse(xhr.responseText)));
-      } catch (e) {
-        reject(e instanceof ApiError ? e : new ApiError('The server sent a response the app could not read.'));
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          return reject(new ApiError('The server sent a response the app could not read.'));
+        }
       }
+      resolve({ status: xhr.status, body });
     };
     xhr.onerror = () => reject(new ApiError(`Could not reach the server at ${API_URL}.`));
     signal?.addEventListener('abort', () => {
@@ -90,6 +159,23 @@ export function uploadAndAnalyze(
       form.append(UPLOAD_FIELD, { uri, name, type } as unknown as Blob);
       xhr.send(form);
     }
+  });
+}
+
+function serverError(status: number, body: Json) {
+  const d = body.detail;
+  const detail = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
+  return new ApiError(detail ? `Server error ${status}: ${detail}` : `Server error ${status}.`);
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new ApiError('aborted'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(t);
+      reject(new ApiError('aborted'));
+    });
   });
 }
 
@@ -140,7 +226,10 @@ export async function transcribeAudio(uri: string): Promise<string> {
   }
 }
 
-/** AI analyzer: asks Gemini (on the server) to explain measured fatigue and the check-in. */
+/**
+ * AI analyzer: asks Gemini (on the server) whether the athlete's words and exhaustion rating
+ * line up with the measured fatigue, and to explain the set.
+ */
 export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Promise<Insights> {
   if (!hasApi) throw new ApiError('No server configured.');
   const controller = new AbortController();
@@ -162,7 +251,10 @@ export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, 
       signal: controller.signal,
     });
     if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
-    return normalizeInsights(await res.json());
+    const insights = normalizeInsights(await res.json());
+    // The rating-vs-data rule is a floor: the AI can add a red flag but never clear one.
+    const issues = ratingIssues(result, checkIn);
+    return issues.length && insights.flag !== 'red' ? { ...insights, flag: 'red', flag_reason: issues.join(' ') } : insights;
   } finally {
     clearTimeout(timer);
   }
@@ -172,7 +264,7 @@ export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, 
 
 function normalizeInsights(body: Json): Insights {
   const ok =
-    (body.flag === 'red' || body.flag === 'none') &&
+    (body.flag === 'red' || body.flag === 'green' || body.flag === 'none') &&
     typeof body.headline === 'string' &&
     Array.isArray(body.insights) &&
     typeof body.athlete_note === 'string' &&
@@ -180,7 +272,8 @@ function normalizeInsights(body: Json): Insights {
   if (!ok) throw new ApiError('The insights response is missing fields.');
   const sentiment = body.sentiment === 'positive' || body.sentiment === 'negative' ? body.sentiment : 'neutral';
   return {
-    flag: body.flag as Insights['flag'],
+    // Older servers answer 'none' when there was no flag.
+    flag: body.flag === 'red' ? 'red' : 'green',
     flag_reason: typeof body.flag_reason === 'string' ? body.flag_reason : null,
     sentiment,
     headline: body.headline as string,

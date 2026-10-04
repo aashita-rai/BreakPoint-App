@@ -97,7 +97,7 @@ The mismatch flag is deterministic: expected effort is `RFI / 10`, clipped to 1-
 
 ## Data and Privacy
 
-The app store is session-only and contains no generated team roster or generated workouts. Athletes appear in the coach view after they sign in; workouts appear after real analysis. The bundled offline demo is a precomputed analysis asset, not a generated team record. The server processes uploaded video for the request and serves the annotated result; production deployments need explicit retention, access control, consent, and deletion policies, especially for minors.
+The app store is session-only. The football roster is pre-filled with sample squat sets (`src/data/sample-workouts.ts`) so the coach and trainer dashboard shows a realistic spread of fatigue levels, flags and workout counts; these are generated, not real athlete data. Other athletes appear in the coach view after they sign in, and real workouts are added after analysis. The bundled offline demo is a precomputed analysis asset, not a generated team record. The server processes uploaded video for the request and serves the annotated result; production deployments need explicit retention, access control, consent, and deletion policies, especially for minors.
 
 ## Run
 

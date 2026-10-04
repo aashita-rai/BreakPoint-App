@@ -82,8 +82,12 @@ export type Report = {
 // ── AI analyzer (POST /insights, with a rule-based fallback in the app) ─────
 
 export type Insights = {
-  /** 'red' = possible hidden overwork: the data shows high fatigue the athlete didn't report. */
-  flag: 'red' | 'none';
+  /**
+   * Does the athlete's self-report (their words + 1-10 exhaustion rating) line up with the
+   * measured fatigue? 'green' = yes; 'red' = no, e.g. "not tired" while the data shows they were.
+   */
+  flag: 'red' | 'green';
+  /** One sentence comparing what the athlete reported with what the data shows. */
   flag_reason: string | null;
   /** Tone of the athlete's own description of the workout. */
   sentiment: 'positive' | 'neutral' | 'negative';

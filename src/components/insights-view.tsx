@@ -6,28 +6,30 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Insights } from '@/lib/squat-types';
 
-/** AI analyzer output. Staff see the red-flag wording and coach note; athletes see a gentler version. */
+/** AI analyzer output. Staff see the green/red flag and coach note; athletes see a gentler version. */
 export function InsightsView({ insights, audience }: { insights: Insights; audience: 'athlete' | 'staff' }) {
   const theme = useTheme();
   const red = insights.flag === 'red';
+  const staff = audience === 'staff';
+  const flagColor = red ? theme.statusRed : theme.statusGreen;
 
   return (
-    <Card style={red ? { borderColor: theme.statusRed, borderWidth: 2 } : undefined}>
+    <Card style={staff || red ? { borderColor: flagColor, borderWidth: 2 } : undefined}>
       <View style={styles.top}>
-        <View style={[styles.badge, { backgroundColor: red ? theme.statusRed : theme.primary }]}>
-          <Icon name={red ? 'warning' : 'bolt'} size={18} color="#FFFFFF" />
+        <View style={[styles.badge, { backgroundColor: staff || red ? flagColor : theme.primary }]}>
+          <Icon name={staff ? 'flag' : red ? 'warning' : 'bolt'} size={18} color="#FFFFFF" />
         </View>
         <View style={styles.flex}>
           <ThemedText type="small" themeColor="textSecondary">
             {insights.source === 'ai' ? 'GEMINI EXPLANATION' : 'PLAIN-LANGUAGE SUMMARY'}
           </ThemedText>
           <ThemedText style={styles.headline}>
-            {red && audience === 'staff' ? `Red flag: ${insights.headline.toLowerCase()}` : insights.headline}
+            {staff ? `${red ? 'Red' : 'Green'} flag: ${insights.headline.toLowerCase()}` : insights.headline}
           </ThemedText>
         </View>
       </View>
 
-      {red && audience === 'staff' && insights.flag_reason && (
+      {staff && insights.flag_reason && (
         <View style={[styles.reason, { backgroundColor: theme.backgroundSelected }]}>
           <ThemedText type="small">{insights.flag_reason}</ThemedText>
         </View>
