@@ -58,3 +58,18 @@ def hip_signal(joints, fps, acfg):
         ref, L = standing(active | (h0 > -0.1))
     h = (ref - hip_y) / L
     return {"h": h, "L": L, "hip_ref": ref, "active": active, "leg": leg}
+
+
+def camera_view(kps, vcfg, min_conf=0.3):
+    """Side vs front from shoulder width / torso length (both shoulders and hips confident).
+    From the side the shoulders overlap (~0.1-0.2); from the front they are ~0.8-1.0 of torso length."""
+    ok = (kps[:, [5, 6, 11, 12], 2] > min_conf).all(1)
+    if ok.sum() < vcfg["min_frames"]:
+        return {"side_view": False, "shoulder_torso_ratio": None, "reason": "not enough frames to judge camera angle"}
+    k = kps[ok]
+    width = np.linalg.norm(k[:, 5, :2] - k[:, 6, :2], axis=1)
+    torso = np.linalg.norm((k[:, 5, :2] + k[:, 6, :2]) / 2 - (k[:, 11, :2] + k[:, 12, :2]) / 2, axis=1)
+    ratio = float(np.median(width / np.maximum(torso, 1e-6)))
+    side = ratio <= vcfg["max_shoulder_torso_ratio"]
+    return {"side_view": bool(side), "shoulder_torso_ratio": round(ratio, 3),
+            "reason": None if side else "camera is not side-on; knee angle hidden"}

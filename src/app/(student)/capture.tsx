@@ -9,7 +9,8 @@ import { Button, Card, HeroHeader, Icon } from '@/components/ui-kit';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatClock } from '@/lib/metrics';
-import { API_URL, checkHealth, hasApi } from '@/services/api';
+import { SQUAT_VARIATIONS, type SquatVariation } from '@/lib/squat-types';
+import { checkHealth, hasApi } from '@/services/api';
 
 // README §9 Capture tab setup guide.
 const SETUP_GUIDE = [
@@ -29,6 +30,7 @@ export default function CaptureScreen() {
   const [video, setVideo] = useState<PickedVideo | null>(null);
   const [error, setError] = useState('');
   const [server, setServer] = useState<ServerState>(hasApi ? 'checking' : 'none');
+  const [variation, setVariation] = useState<SquatVariation>('standard');
 
   useEffect(() => {
     if (!hasApi) return;
@@ -69,15 +71,15 @@ export default function CaptureScreen() {
 
   const analyze = () => {
     if (!video) return;
-    router.push({ pathname: '/processing', params: { mode: 'upload', uri: video.uri } });
+    router.push({ pathname: '/processing', params: { mode: 'upload', uri: video.uri, squatVariation: variation } });
     setVideo(null);
   };
 
   const serverText = {
     none: 'No analysis server set. Start the app with EXPO_PUBLIC_API_URL to analyze your own videos. The demo video works offline.',
-    checking: `Checking ${API_URL}…`,
-    online: `Connected to ${API_URL}`,
-    offline: `Can't reach ${API_URL}. Check the server is running and on the same Wi-Fi, or use the demo video.`,
+    checking: 'Checking the analysis server…',
+    online: 'Connected to the analysis server.',
+    offline: "Can't reach the analysis server. Check it's running (and the tunnel, if you use one), or use the demo video.",
   }[server];
   const serverColor = { none: theme.textSecondary, checking: theme.textSecondary, online: theme.statusGreen, offline: theme.statusRed }[server];
 
@@ -136,6 +138,24 @@ export default function CaptureScreen() {
               </View>
             </View>
           )}
+
+          <Card>
+            <ThemedText type="smallBold">Squat variation</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Choose the variation you filmed so your result is labeled correctly.
+            </ThemedText>
+            <View style={styles.variationRow}>
+              {SQUAT_VARIATIONS.map((item) => {
+                const selected = item === variation;
+                return (
+                  <Pressable key={item} onPress={() => setVariation(item)} accessibilityRole="button" accessibilityState={{ selected }}
+                    style={[styles.variation, { backgroundColor: selected ? theme.primary : theme.background, borderColor: selected ? theme.primary : theme.border }]}>
+                    <ThemedText type="smallBold" style={{ color: selected ? theme.onPrimary : theme.text }}>{item}</ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Card>
 
           {error ? (
             <ThemedText type="small" style={{ color: theme.danger }}>
@@ -218,6 +238,17 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     alignSelf: 'stretch',
     marginTop: Spacing.two,
+  },
+  variationRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
+  },
+  variation: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
   },
   pickedRow: {
     flexDirection: 'row',

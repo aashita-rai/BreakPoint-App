@@ -1,18 +1,16 @@
-import type { AnalysisResult, CheckIn, Insights, Report } from '@/lib/squat-types';
+import type { AnalysisResult, CheckIn, Insights, MismatchStatus, SquatVariation } from '@/lib/squat-types';
 import { Platform } from 'react-native';
 
-// Thin client for the FastAPI server in code/api/ (README §9).
+// Thin client for the FastAPI server in code/api/main.py.
 // Start the app with EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 npx expo start -c
-//
-// TODO: the README gives the JSON contract but not the route names. Check these three
-// paths and the form field name against code/api/main.py.
 export const ENDPOINTS = {
   health: '/health',
-  analyze: '/analyze',
-  report: '/report',
+  /** POST starts a background analysis and returns { job_id }; GET /analyze/jobs/{id} polls it. */
+  analysisJobs: '/analyze/jobs',
   // Added by server/breakpoint_extras.py:
   transcribe: '/transcribe',
   insights: '/insights',
+  weeklyDashboard: '/dashboard/weekly',
 } as const;
 const UPLOAD_FIELD = 'file';
 
@@ -20,6 +18,21 @@ export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '
 export const hasApi = API_URL.length > 0;
 
 export class ApiError extends Error {}
+
+export type WeeklyDashboard = {
+  days: number;
+  sets: number;
+  average_rfi: number | null;
+  follow_ups: number;
+  variations: Record<string, number>;
+};
+
+export async function requestWeeklyDashboard(): Promise<WeeklyDashboard> {
+  if (!hasApi) throw new ApiError('No server configured.');
+  const res = await fetch(`${API_URL}${ENDPOINTS.weeklyDashboard}`);
+  if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
+  return (await res.json()) as WeeklyDashboard;
+}
 
 export async function checkHealth(): Promise<boolean> {
   if (!hasApi) return false;
@@ -35,35 +48,85 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+/** Server-side analysis stages reported by GET /analyze/jobs/{id}. */
+export type ServerStage = 'queued' | 'pose' | 'analysis' | 'render' | 'done';
+
+type JobStatus = {
+  status: 'queued' | 'running' | 'done' | 'error';
+  stage: ServerStage;
+  /** 0-1 across the server's work (pose, analysis, annotated-video render). */
+  progress: number;
+  result: Json | null;
+  error: string | null;
+};
+
 /**
- * Uploads the video and waits for the server to run the pose model and analysis.
- * Uses XMLHttpRequest because fetch can't report upload progress.
+ * Uploads the video, then polls the server's background job until the pose model, analysis and
+ * annotated video are done. Polling keeps every request short, so progress is real and Cloudflare
+ * quick tunnels (which cut responses after ~100 s) never time out on long videos.
  */
-export function uploadAndAnalyze(
+export async function uploadAndAnalyze(
   uri: string,
-  { onUploadProgress, signal }: { onUploadProgress?: (fraction: number) => void; signal?: AbortSignal } = {}
+  {
+    onUploadProgress,
+    onServerProgress,
+    signal,
+    squatVariation,
+  }: {
+    onUploadProgress?: (fraction: number) => void;
+    onServerProgress?: (fraction: number, stage: ServerStage) => void;
+    signal?: AbortSignal;
+    squatVariation?: SquatVariation;
+  } = {}
 ): Promise<AnalysisResult> {
+  const jobId = await startAnalysisJob(uri, { onUploadProgress, signal, squatVariation });
+  let failures = 0;
+  for (;;) {
+    await sleep(800, signal);
+    let job: JobStatus;
+    try {
+      const res = await fetch(`${API_URL}${ENDPOINTS.analysisJobs}/${jobId}`, { signal });
+      if (!res.ok) throw new ApiError(await errorText(res));
+      job = (await res.json()) as JobStatus;
+      failures = 0;
+    } catch (e) {
+      if (signal?.aborted) throw new ApiError('aborted');
+      // Ride out brief network blips (phone Wi-Fi, tunnel reconnects) before giving up.
+      if (++failures >= 5) throw e instanceof ApiError ? e : new ApiError(`Lost contact with the server at ${API_URL}.`);
+      continue;
+    }
+    if (job.status === 'error') throw new ApiError(job.error ?? 'The server could not analyze this video.');
+    if (job.status === 'done' && job.result) return normalizeResult(job.result);
+    onServerProgress?.(isNum(job.progress) ? job.progress : 0, job.stage);
+  }
+}
+
+function startAnalysisJob(
+  uri: string,
+  { onUploadProgress, signal, squatVariation }: { onUploadProgress?: (fraction: number) => void; signal?: AbortSignal; squatVariation?: SquatVariation }
+): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!hasApi) return reject(new ApiError('No server configured.'));
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}${ENDPOINTS.analyze}`);
+    xhr.open('POST', `${API_URL}${ENDPOINTS.analysisJobs}`);
     xhr.responseType = 'text';
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onUploadProgress?.(e.loaded / e.total);
+      if (e.lengthComputable && e.total > 0) onUploadProgress?.(e.loaded / e.total);
     };
     xhr.onload = () => {
+      if (xhr.status === 404 || xhr.status === 405) {
+        return reject(new ApiError('This server has no /analyze/jobs route. Restart FastAPI so it picks up the latest code.'));
+      }
       if (xhr.status < 200 || xhr.status >= 300) {
-        let detail = '';
-        try {
-          const d = JSON.parse(xhr.responseText)?.detail;
-          detail = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
-        } catch {}
-        return reject(new ApiError(detail ? `Server error ${xhr.status}: ${detail}` : `Server error ${xhr.status}.`));
+        return reject(new ApiError(`Server error ${xhr.status}${detailOf(xhr.responseText)}`));
       }
       try {
-        resolve(normalizeResult(JSON.parse(xhr.responseText)));
-      } catch (e) {
-        reject(e instanceof ApiError ? e : new ApiError('The server sent a response the app could not read.'));
+        const id = JSON.parse(xhr.responseText)?.job_id;
+        if (typeof id !== 'string') throw new Error();
+        onUploadProgress?.(1);
+        resolve(id);
+      } catch {
+        reject(new ApiError('The server sent a response the app could not read.'));
       }
     };
     xhr.onerror = () => reject(new ApiError(`Could not reach the server at ${API_URL}.`));
@@ -73,6 +136,7 @@ export function uploadAndAnalyze(
     });
 
     const form = new FormData();
+    form.append('squat_variation', squatVariation ?? 'standard');
     const name = uri.split('/').pop() || 'squats.mp4';
     if (Platform.OS === 'web') {
       // Browsers need a real Blob; the { uri, name, type } object only works on iOS/Android.
@@ -93,32 +157,29 @@ export function uploadAndAnalyze(
   });
 }
 
-/** Asks the server for the mismatch flag and the three messages (LLM with its own template fallback). */
-export async function requestReport(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Promise<Report> {
-  if (!hasApi) throw new ApiError('No server configured.');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+function detailOf(text: string) {
   try {
-    const res = await fetch(`${API_URL}${ENDPOINTS.report}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        result,
-        check_in: {
-          reported_rpe: checkIn.rpe,
-          pain: checkIn.pain,
-          pain_locations: checkIn.pain_locations,
-          notes: checkIn.notes,
-        },
-        athlete_name: athleteName,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
-    return normalizeReport(await res.json(), checkIn);
-  } finally {
-    clearTimeout(timer);
+    const d = JSON.parse(text)?.detail;
+    const msg = typeof d === 'string' ? d : d ? JSON.stringify(d).slice(0, 200) : '';
+    return msg ? `: ${msg}` : '.';
+  } catch {
+    return '.';
   }
+}
+
+async function errorText(res: Response) {
+  return `Server error ${res.status}${detailOf(await res.text().catch(() => ''))}`;
+}
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new ApiError('aborted'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(t);
+      reject(new ApiError('aborted'));
+    });
+  });
 }
 
 /** Sends a voice recording to the server (Whisper) and returns the text. */
@@ -156,12 +217,13 @@ export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, 
           opinion: checkIn.notes,
           pain: checkIn.pain,
           pain_locations: checkIn.pain_locations,
+          pain_other: checkIn.pain_other,
         },
         athlete_name: athleteName,
       }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new ApiError(`Server error ${res.status}.`);
+    if (!res.ok) throw new ApiError(await errorText(res));
     return normalizeInsights(await res.json());
   } finally {
     clearTimeout(timer);
@@ -176,8 +238,12 @@ function normalizeInsights(body: Json): Insights {
     typeof body.headline === 'string' &&
     Array.isArray(body.insights) &&
     typeof body.athlete_note === 'string' &&
-    typeof body.coach_note === 'string';
-  if (!ok) throw new ApiError('The insights response is missing fields.');
+    typeof body.coach_note === 'string' &&
+    typeof body.mismatch_summary === 'string' &&
+    isNum(body.expected_rpe) &&
+    isNum(body.reported_rpe) &&
+    (body.status === 'consistent' || body.status === 'under-reporting' || body.status === 'over-reporting');
+  if (!ok) throw new ApiError('The Gemini response is missing fields. Restart FastAPI so it picks up the latest code.');
   const sentiment = body.sentiment === 'positive' || body.sentiment === 'negative' ? body.sentiment : 'neutral';
   return {
     flag: body.flag as Insights['flag'],
@@ -187,8 +253,13 @@ function normalizeInsights(body: Json): Insights {
     insights: (body.insights as unknown[]).filter((s): s is string => typeof s === 'string').slice(0, 4),
     athlete_note: body.athlete_note as string,
     coach_note: body.coach_note as string,
-    // The server falls back to its own rules if Gemini is unavailable.
-    source: body.source === 'rules' ? 'rules' : 'ai',
+    trainer_note: typeof body.trainer_note === 'string' ? body.trainer_note : body.coach_note as string,
+    status: body.status as MismatchStatus,
+    expected_rpe: body.expected_rpe as number,
+    reported_rpe: body.reported_rpe as number,
+    mismatch_summary: body.mismatch_summary as string,
+    escalation: typeof body.escalation === 'string' && body.escalation ? body.escalation : null,
+    source: 'ai',
   };
 }
 
@@ -227,21 +298,5 @@ function normalizeResult(body: Json): AnalysisResult {
     breakdown_rep: isNum(result.breakdown_rep) ? result.breakdown_rep : null,
     // Relative URLs are served by the same API.
     annotated_video_url: url ? (/^https?:\/\//.test(url) ? url : `${API_URL}/${url.replace(/^\/+/, '')}`) : null,
-  };
-}
-
-function normalizeReport(body: Json, checkIn: CheckIn): Report {
-  const messages = body.messages as Json | undefined;
-  const status = (body.status ?? body.mismatch) as Report['status'] | undefined;
-  if (!messages || typeof messages.athlete !== 'string' || typeof messages.coach !== 'string' || typeof messages.trainer !== 'string' || !status) {
-    throw new ApiError('The report response is missing messages or status.');
-  }
-  return {
-    status,
-    expected_rpe: isNum(body.expected_rpe) ? body.expected_rpe : 0,
-    reported_rpe: checkIn.rpe,
-    messages: { athlete: messages.athlete, coach: messages.coach, trainer: messages.trainer },
-    escalation: typeof body.escalation === 'string' ? body.escalation : null,
-    source: 'api',
   };
 }

@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -68,6 +69,12 @@ export default function SignInScreen() {
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.hero}>
         <SafeAreaView edges={['top']} style={styles.heroInner}>
+          <Image
+            source={require('@/assets/images/logo.png')}
+            style={styles.logo}
+            contentFit="contain"
+            accessibilityLabel="BreakPoint logo"
+          />
           <ThemedText style={styles.brand}>BreakPoint</ThemedText>
           <ThemedText style={styles.tagline}>Find your breaking point. Train past it.</ThemedText>
         </SafeAreaView>
@@ -157,6 +164,11 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.six,
     paddingBottom: Spacing.five,
     gap: Spacing.two,
+  },
+  logo: {
+    width: 112,
+    height: 117,
+    borderRadius: 20,
   },
   brand: {
     color: '#FFFFFF',

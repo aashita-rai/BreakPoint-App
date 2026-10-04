@@ -16,7 +16,7 @@ import { ANALYSIS_STAGES, analyzeSquatVideo, isAbort, NoServerError } from '@/se
 export default function ProcessingScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const { mode, uri } = useLocalSearchParams<{ mode: 'upload' | 'demo'; uri?: string }>();
+  const { mode, uri, squatVariation } = useLocalSearchParams<{ mode: 'upload' | 'demo'; uri?: string; squatVariation?: string }>();
   const [progress, setProgress] = useState(0);
   const [stage, setStage] = useState<string>(ANALYSIS_STAGES[0]);
   const [reps, setReps] = useState<RepResult[]>([]);
@@ -37,6 +37,7 @@ export default function ProcessingScreen() {
     const controller = new AbortController();
     abortRef.current = controller;
     analyzeSquatVideo(isDemo || !uri ? { kind: 'demo' } : { kind: 'upload', uri }, {
+      squatVariation: (squatVariation as 'standard' | 'pause' | 'tempo' | 'narrow' | 'sumo') ?? 'standard',
       signal: controller.signal,
       onProgress: (p, s) => {
         setProgress(p);
@@ -48,7 +49,7 @@ export default function ProcessingScreen() {
         const id = `${session.athleteId}-${Date.now()}`;
         addWorkout(session.athleteId, {
           id,
-          title: isDemo ? 'Demo: squats.mp4' : 'Bodyweight Squat Set',
+          title: isDemo ? 'Demo: squats.mp4' : `${squatVariation ?? 'standard'} squat set`,
           date: new Date().toISOString(),
           videoUri: isDemo ? undefined : uri,
           result,
@@ -66,7 +67,7 @@ export default function ProcessingScreen() {
         );
       });
     return () => controller.abort();
-  }, [isDemo, uri, router]);
+  }, [isDemo, uri, router, squatVariation]);
 
   const cancel = () => {
     abortRef.current?.abort();

@@ -3,7 +3,7 @@ from common.keypoint_schema import load_keypoints
 from . import signals, reps as reps_mod, metrics, fatigue
 
 
-def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False):
+def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False, squat_variation="standard"):
     a = cfg["analysis"]
     side, side_scores = signals.pick_side(kps)
     joints, missing = signals.clean_joints(kps, fps, side, a)
@@ -12,11 +12,17 @@ def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False)
     segs = reps_mod.segment_reps(h, fps, a["rep"])
     if not segs:
         raise ValueError("no squat reps detected (try lowering analysis.rep.prominence)")
-    rm = [metrics.rep_metrics(s, h, joints, L, fps) for s in segs]
-    fat = fatigue.compute_fatigue(rm, a["fatigue"])
+    view = signals.camera_view(kps, a["view"], a["min_conf"])
+    rm = [metrics.rep_metrics(s, h, joints, L, fps, a["rep"]["pause_speed"], view["side_view"], a["rep"]["min_pause_s"])
+          for s in segs]
+    fat = fatigue.compute_fatigue(rm, a["fatigue"], squat_variation)
     clean_fraction = sum(r["clean"] for r in rm) / max(1, len(rm))
     missing_rate = float(missing.mean())
     quality_warnings = []
+    if fat.get("insufficient_reps"):
+        quality_warnings.append("This set is too short for a reliable fatigue trend; record at least five clean reps.")
+    if not view["side_view"]:
+        quality_warnings.append("The camera wasn't side-on, so knee angles are hidden. Film from the side for angle readings.")
     if missing_rate > 0.10:
         quality_warnings.append("Some body landmarks were uncertain or interpolated.")
     if clean_fraction < 0.90:
@@ -34,8 +40,8 @@ def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False)
         out_reps.append(d)
     step = max(1, len(h) // 600)
     result = {
-        "movement": "squat", "model": model_name, "fps": round(float(fps), 3),
-        "side": side, "leg_length_px": round(float(L), 2),
+        "movement": "squat", "squat_variation": squat_variation, "model": model_name, "fps": round(float(fps), 3),
+        "side": side, "leg_length_px": round(float(L), 2), "view": view,
         "rep_count": len(rm), "clean_rep_count": int(sum(r["clean"] for r in rm)),
         "reps": out_reps,
         "baseline": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in fat["baseline"].items()},
@@ -44,7 +50,7 @@ def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False)
         "missing_frame_rate": round(missing_rate, 4),
         "quality": {
             "score": round(quality_score, 2),
-            "usable": missing_rate <= a["max_missing_frac"] and clean_fraction >= 0.80,
+            "usable": missing_rate <= a["max_missing_frac"] and clean_fraction >= 0.80 and not fat.get("insufficient_reps"),
             "warnings": quality_warnings,
         },
         "hip_signal": {"t": [round(float(x), 3) for x in times[::step]], "h": [round(float(x), 4) for x in h[::step]]},

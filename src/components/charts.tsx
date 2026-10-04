@@ -22,6 +22,12 @@ type ChartProps = {
   yLabel?: string;
   /** x position where fatigue starts; shades everything after it. */
   markerX?: number | null;
+  /** Label for the shaded zone after markerX (default "Fatigue"). */
+  markerLabel?: string;
+  /** A dashed horizontal reference line, e.g. the athlete's reported effort. */
+  referenceY?: { y: number; label: string } | null;
+  /** Fixed y range instead of fitting the data (e.g. [0, 100] for RFI). */
+  yDomain?: [number, number];
   height?: number;
   interactive?: boolean;
 };
@@ -159,20 +165,44 @@ function Axes({
   );
 }
 
-function FatigueZone({ x, plotW, plotH, pad }: { x: number; plotW: number; plotH: number; pad: Pad }) {
+function FatigueZone({ x, plotW, plotH, pad, label = 'Fatigue' }: { x: number; plotW: number; plotH: number; pad: Pad; label?: string }) {
   const theme = useTheme();
   return (
     <>
       <Rect x={x} y={pad.top} width={pad.left + plotW - x} height={plotH} fill={theme.accentSoft} />
       <Line x1={x} x2={x} y1={pad.top - 4} y2={pad.top + plotH} stroke={theme.chartMarker} strokeWidth={2} strokeDasharray="4 3" />
       <SvgText x={x + 4} y={pad.top - 6} fontSize={11} fontWeight="600" fill={theme.textSecondary}>
-        Fatigue
+        {label}
       </SvgText>
     </>
   );
 }
 
-export function LineChart({ points, formatY, formatX, xLabel, yLabel, markerX, height = 210, interactive = true }: ChartProps) {
+function ReferenceLine({ y, label, plotW, pad }: { y: number; label: string; plotW: number; pad: Pad }) {
+  const theme = useTheme();
+  return (
+    <>
+      <Line x1={pad.left} x2={pad.left + plotW} y1={y} y2={y} stroke={theme.statusRed} strokeWidth={2} strokeDasharray="6 4" />
+      <SvgText x={pad.left + plotW - 4} y={y - 6} fontSize={11} fontWeight="700" fill={theme.statusRed} textAnchor="end">
+        {label}
+      </SvgText>
+    </>
+  );
+}
+
+export function LineChart({
+  points,
+  formatY,
+  formatX,
+  xLabel,
+  yLabel,
+  markerX,
+  markerLabel,
+  referenceY,
+  yDomain,
+  height = 210,
+  interactive = true,
+}: ChartProps) {
   const theme = useTheme();
   const pad = padFor(xLabel, yLabel);
   const { width, setWidth, plotW, plotH } = useChartFrame(height, pad);
@@ -181,7 +211,8 @@ export function LineChart({ points, formatY, formatX, xLabel, yLabel, markerX, h
   const ys = points.map((p) => p.y);
   const xMin = Math.min(...xs);
   const xMax = Math.max(...xs);
-  const yTicks = niceTicks(Math.min(...ys) * 0.9, Math.max(...ys) * 1.05);
+  const ref = referenceY ? [referenceY.y] : [];
+  const yTicks = yDomain ? niceTicks(yDomain[0], yDomain[1]) : niceTicks(Math.min(...ys, ...ref) * 0.9, Math.max(...ys, ...ref) * 1.05);
   const yMin = yTicks[0];
   const yMax = yTicks[yTicks.length - 1];
 
@@ -201,20 +232,28 @@ export function LineChart({ points, formatY, formatX, xLabel, yLabel, markerX, h
       <View style={{ height }} onLayout={(e) => setWidth(e.nativeEvent.layout.width)} {...handlers}>
         {width > 0 && points.length > 0 && (
           <Svg width={width} height={height}>
-            {markerX != null && <FatigueZone x={xScale(markerX)} plotW={plotW} plotH={plotH} pad={pad} />}
+            {markerX != null && <FatigueZone x={xScale(markerX)} plotW={plotW} plotH={plotH} pad={pad} label={markerLabel} />}
             <Axes yTicks={yTicks} yScale={yScale} plotW={plotW} plotH={plotH} height={height} pad={pad} formatY={formatY} xLabel={xLabel} yLabel={yLabel} />
             {xTicks.map((t) => (
               <SvgText key={`x${t}`} x={xScale(t)} y={tickY} fontSize={11} fill={theme.textSecondary} textAnchor="middle">
                 {formatX(t)}
               </SvgText>
             ))}
-            {sel && (
-              <Line x1={xScale(sel.x)} x2={xScale(sel.x)} y1={pad.top} y2={pad.top + plotH} stroke={theme.textSecondary} strokeWidth={1} />
-            )}
+            {referenceY && <ReferenceLine y={yScale(referenceY.y)} label={referenceY.label} plotW={plotW} pad={pad} />}
             <Path d={d} stroke={theme.chartSeries} strokeWidth={2} fill="none" strokeLinejoin="round" />
-            {sel && (
-              <Circle cx={xScale(sel.x)} cy={yScale(sel.y)} r={5} fill={theme.chartSeries} stroke={theme.backgroundElement} strokeWidth={2} />
-            )}
+            {/* The tapped point is shown by a larger dot and the readout above; no vertical cursor line,
+                which looked like a breakdown marker. */}
+            {points.map((p, i) => (
+              <Circle
+                key={`p${p.x}`}
+                cx={px[i]}
+                cy={yScale(p.y)}
+                r={selected === i ? 6 : 3}
+                fill={theme.chartSeries}
+                stroke={theme.backgroundElement}
+                strokeWidth={selected === i ? 2 : 1}
+              />
+            ))}
           </Svg>
         )}
       </View>

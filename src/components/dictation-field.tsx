@@ -13,11 +13,13 @@ export function DictationField({
   onChangeText,
   placeholder,
   onVoiceUsed,
+  voiceEnabled = true,
 }: {
   value: string;
   onChangeText: (text: string) => void;
   placeholder: string;
   onVoiceUsed?: () => void;
+  voiceEnabled?: boolean;
 }) {
   const theme = useTheme();
   const [hint, setHint] = useState('');
@@ -61,18 +63,16 @@ export function DictationField({
           editable={!dictation.listening && !busy}
           onChangeText={onChangeText}
         />
-        <Pressable
-          onPress={toggleMic}
-          disabled={busy}
-          accessibilityRole="button"
-          accessibilityLabel={dictation.listening ? 'Stop recording' : 'Speak instead of typing'}
-          style={[styles.mic, { backgroundColor: dictation.listening ? theme.chartMarker : theme.accent }]}>
-          {busy ? (
-            <ActivityIndicator color={theme.onAccent} />
-          ) : (
-            <Icon name={dictation.listening ? 'stop' : 'mic'} size={20} color={theme.onAccent} />
-          )}
-        </Pressable>
+        {voiceEnabled && (
+          <Pressable
+            onPress={toggleMic}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={dictation.listening ? 'Stop recording' : 'Speak instead of typing'}
+            style={[styles.mic, { backgroundColor: dictation.listening ? theme.chartMarker : theme.accent }]}>
+            {busy ? <ActivityIndicator color={theme.onAccent} /> : <Icon name={dictation.listening ? 'stop' : 'mic'} size={20} color={theme.onAccent} />}
+          </Pressable>
+        )}
       </View>
       {dictation.listening && (
         <ThemedText type="small" style={{ color: theme.chartMarker }}>

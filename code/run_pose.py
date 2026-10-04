@@ -18,8 +18,16 @@ from pose_backends import make_backend
 from pose_backends.base import resolve_device
 
 
-def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend=None):
+def expected_pose_frames(info, pose_fps):
+    """How many frames iter_frames will yield; used only for progress reporting."""
+    keep = min(1.0, pose_fps / info["fps"]) if pose_fps else 1.0
+    return max(1, int(info["n_frames"] * keep))
+
+
+def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend=None, progress=None):
+    """progress(fraction 0-1) is called after each frame when given (the API's job status uses it)."""
     info = probe(video)
+    total = expected_pose_frames(info, cfg["pose_fps"])
     own = backend is None
     if own:
         backend = make_backend(mcfg, cfg, device)
@@ -34,6 +42,8 @@ def run(mcfg, cfg, video, device, kind=None, max_frames=None, log=print, backend
             k = backend.infer(frame)
             dts.append(time.perf_counter() - t0)
             kps.append(k); times.append(t); idxs.append(i)
+            if progress:
+                progress(min(1.0, (n + 1) / total))
             if n % 200 == 0:
                 log(f"[{mcfg['name']}] frame {n} t={t:.1f}s")
     finally:
