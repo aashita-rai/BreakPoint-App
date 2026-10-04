@@ -196,7 +196,7 @@ export default function ResultsScreen() {
                   {formatSpeed(rep.ascent_speed)}
                 </ThemedText>
                 <View style={styles.statusCell}>
-                  <StatusPill status={rfiStatus(rep.rfi)} />
+                  {rep.scored === false ? <ThemedText type="small" themeColor="textSecondary">Unscored</ThemedText> : <StatusPill status={rfiStatus(rep.rfi)} />}
                 </View>
               </View>
             ))}

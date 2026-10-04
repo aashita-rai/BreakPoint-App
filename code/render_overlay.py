@@ -81,9 +81,12 @@ def render(video, kp_npz, result, out_mp4, cfg, min_conf=0.3):
                 f"depth {cur['depth']:.2f}L  knee {cur['min_knee_angle']:.0f} deg  "
                 f"rise {cur['ascent_speed']:.2f}L/s"
             )
-            if cur["rfi"] is not None:
+            if cur.get("scored", True) and cur["rfi"] is not None:
                 lines[1] += f"  RFI {cur['rfi']:.0f}"
                 col = COL[cur["status"]]
+            elif cur.get("scored") is False:
+                lines[1] += "  unscored"
+                col = (180, 180, 180)
             for warning in cur.get("form_warnings", []):
                 lines.append(f"cue: {warning[:72]}")
         angle_color = COL["red"] if cur and any("angle" in w.lower() for w in cur.get("form_warnings", [])) else (255, 255, 255)

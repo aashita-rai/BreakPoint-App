@@ -19,7 +19,7 @@ export function InsightsView({ insights, audience }: { insights: Insights; audie
         </View>
         <View style={styles.flex}>
           <ThemedText type="small" themeColor="textSecondary">
-            {insights.source === 'ai' ? 'AI ANALYZER' : 'WORKOUT ANALYZER'}
+            {insights.source === 'ai' ? 'GEMINI EXPLANATION' : 'PLAIN-LANGUAGE SUMMARY'}
           </ThemedText>
           <ThemedText style={styles.headline}>
             {red && audience === 'staff' ? `Red flag: ${insights.headline.toLowerCase()}` : insights.headline}

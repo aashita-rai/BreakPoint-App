@@ -91,6 +91,8 @@ Each rep contains `start_t`, `bottom_t`, `end_t`, `tempo_s`, `descent_s`, `ascen
 
 Check-in does not depend on an LLM. Dictation is optional and uses the `/transcribe` route when configured. Insights use Gemini only when `GEMINI_API_KEY` is configured; deterministic templates and rules remain available offline or when the service fails. The LLM explains measured evidence and never controls the safety flag.
 
+The Report screen always includes a plain-language summary. With the Gemini route available it is labeled `GEMINI EXPLANATION`; otherwise the app generates the same kind of explanation locally from the measured facts and check-in.
+
 The mismatch flag is deterministic: expected effort is `RFI / 10`, clipped to 1-10. A large gap or low reported effort alongside high RFI raises a possible hidden-overwork flag. Any reported pain creates an escalation message directing the athlete to a trainer or clinician; severe symptoms should be handled urgently. The app never claims that an athlete is medically safe or “fine.”
 
 ## Data and Privacy

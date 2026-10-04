@@ -21,6 +21,8 @@ export type RepResult = {
   hip_below_knee: number;
   /** Rep Fatigue Index, 0-100. */
   rfi: number;
+  /** False when this rep was retained but excluded from fatigue scoring. */
+  scored?: boolean;
   /** Conservative, measurement-derived cues shown during this rep. */
   form_warnings?: string[];
 };

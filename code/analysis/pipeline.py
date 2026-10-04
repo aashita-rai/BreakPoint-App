@@ -26,6 +26,10 @@ def analyze_arrays(kps, times, fps, cfg, model_name="unknown", with_debug=False)
     for i, r in enumerate(rm, 1):
         d = {"i": i}
         d.update({k: (None if v is None else (round(v, 4) if isinstance(v, float) else v)) for k, v in r.items()})
+        d["scored"] = r["rfi"] is not None
+        # Keep the transport contract numeric while making the missing score explicit.
+        if d["rfi"] is None:
+            d["rfi"] = 0.0
         d["form_warnings"] = metrics.form_warnings(r, fat["baseline"])
         out_reps.append(d)
     step = max(1, len(h) // 600)

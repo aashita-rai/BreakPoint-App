@@ -9,6 +9,7 @@ import { Button, Card, HeroHeader } from '@/components/ui-kit';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { getAthlete, session, useStore } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
+import { ruleInsights } from '@/lib/insights';
 import { formatDate } from '@/lib/metrics';
 
 export default function ReportScreen() {
@@ -16,8 +17,10 @@ export default function ReportScreen() {
   const theme = useTheme();
   const store = useStore();
   const { workoutId } = useLocalSearchParams<{ workoutId?: string }>();
-  const workouts = getAthlete(store, session.athleteId)?.workouts ?? [];
+  const athlete = getAthlete(store, session.athleteId);
+  const workouts = athlete?.workouts ?? [];
   const workout = workouts.find((w) => w.id === workoutId && w.report) ?? workouts.find((w) => w.report);
+  const plainLanguage = workout?.insights ?? (workout?.checkIn ? ruleInsights(workout.result, workout.checkIn, athlete?.name ?? 'Athlete') : undefined);
 
   return (
     <View style={[styles.flex, { backgroundColor: theme.background }]}>
@@ -30,7 +33,7 @@ export default function ReportScreen() {
                 For: <ThemedText type="smallBold">{workout.title}</ThemedText> · {formatDate(workout.date)} · RFI{' '}
                 {workout.result.overall_rfi}
               </ThemedText>
-              {workout.insights && <InsightsView insights={workout.insights} audience="athlete" />}
+              {plainLanguage && <InsightsView insights={plainLanguage} audience="athlete" />}
               <ReportView report={workout.report} checkIn={workout.checkIn} />
               <Button
                 title="View this set's results"

@@ -213,16 +213,17 @@ function normalizeResult(body: Json): AnalysisResult {
     'peak_ascent_speed',
     'min_knee_angle',
     'hip_below_knee',
-    'rfi',
   ];
-  for (const r of reps) {
+  const normalizedReps = reps.map((r) => {
     const missing = fields.filter((f) => !isNum(r[f]));
     if (missing.length) throw new ApiError(`A rep in the server response is missing: ${missing.join(', ')}.`);
-  }
+    return isNum(r.rfi) ? r : { ...r, rfi: 0, scored: false };
+  });
   const result = body as unknown as AnalysisResult;
   const url = result.annotated_video_url;
   return {
     ...result,
+    reps: normalizedReps as unknown as AnalysisResult['reps'],
     breakdown_rep: isNum(result.breakdown_rep) ? result.breakdown_rep : null,
     // Relative URLs are served by the same API.
     annotated_video_url: url ? (/^https?:\/\//.test(url) ? url : `${API_URL}/${url.replace(/^\/+/, '')}`) : null,
