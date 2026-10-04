@@ -27,6 +27,13 @@ app = FastAPI(title="Squat Form-Fatigue API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/videos", StaticFiles(directory=str(VIDEOS)), name="videos")
 
+try:
+    from server.breakpoint_extras import router as extras_router
+except ModuleNotFoundError:
+    extras_router = None
+if extras_router is not None:
+    app.include_router(extras_router)
+
 _state = {"backend": None, "name": None}
 _lock = threading.Lock()
 
@@ -94,7 +101,6 @@ def analyze(file: UploadFile = File(...)):
         save_keypoints(npz, kps, times, meta)
         render(vid, npz, result, out, cfg)
     result["annotated_video_url"] = f"/videos/{vid_id}.mp4"
-    Path("/tmp/last_analyze.json").write_text(json.dumps(result, default=str))
     return result
 
 

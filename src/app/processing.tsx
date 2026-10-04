@@ -5,13 +5,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BarChart } from '@/components/charts';
 import { ThemedText } from '@/components/themed-text';
-import { Button, Card, Icon, StatTile, SyntheticBanner } from '@/components/ui-kit';
+import { Button, Card, Icon, StatTile } from '@/components/ui-kit';
 import { MaxContentWidth, PastelOrange, Spacing, UFBlue } from '@/constants/theme';
 import { addWorkout, session } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDepth } from '@/lib/metrics';
 import type { RepResult } from '@/lib/squat-types';
-import { ANALYSIS_STAGES, analyzeSquatVideo, DEMO_RESULT, isAbort, NoServerError } from '@/services/squat-analysis';
+import { ANALYSIS_STAGES, analyzeSquatVideo, isAbort, NoServerError } from '@/services/squat-analysis';
 
 export default function ProcessingScreen() {
   const router = useRouter();
@@ -106,8 +106,6 @@ export default function ProcessingScreen() {
         </View>
 
         <View style={styles.body}>
-          {isDemo && DEMO_RESULT.synthetic && <SyntheticBanner />}
-
           {error ? (
             <>
               <Button

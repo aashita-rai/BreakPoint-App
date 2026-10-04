@@ -3,7 +3,7 @@ BreakPoint extras for the FastAPI server in code/api/ (README §9).
 
 Adds two routes the app calls:
   POST /transcribe  voice clip (.m4a from the phone) -> {"text": ...}, using Whisper on CPU
-  POST /insights    AI analyzer: is the athlete overworking without realising it? (Claude)
+    POST /insights    AI analyzer: is the athlete overworking without realising it? (Gemini)
 
 Plug into the existing server (code/api/main.py):
     from api.breakpoint_extras import router as extras_router
@@ -12,7 +12,7 @@ Plug into the existing server (code/api/main.py):
 Or run on its own while testing:   uvicorn extras_app:app --host 0.0.0.0 --port 8000
 
 Environment:
-    ANTHROPIC_API_KEY  needed for /insights (without it, /insights still answers using the rules)
+    GEMINI_API_KEY     needed for /insights (without it, /insights still answers using the rules)
     WHISPER_MODEL      faster-whisper model name, default "base.en"
 
 Install:  pip install -r requirements-extras.txt
@@ -25,8 +25,8 @@ import os
 import tempfile
 from typing import Literal
 
-import anthropic
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from google import genai
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter()
@@ -35,7 +35,7 @@ router = APIRouter()
 HIDDEN_OVERWORK_MIN_RFI = 50  # set RFI above this ...
 HIDDEN_OVERWORK_MAX_EXHAUSTION = 3  # ... with self-rated exhaustion at or below this -> red flag
 MISMATCH_GAP = 3  # ... or exhaustion this far below expected (RFI / 10)
-MODEL = "claude-opus-5-5"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 # ── /transcribe ──────────────────────────────────────────────────────────────
@@ -82,6 +82,7 @@ class Rep(BaseModel):
     depth: float
     ascent_speed: float
     rfi: float
+    form_warnings: list[str] = []
 
 
 class Baseline(BaseModel):
@@ -97,6 +98,7 @@ class Result(BaseModel):
     baseline: Baseline
     breakdown_rep: int | None = None
     overall_rfi: float
+    quality: dict | None = None
 
 
 class CheckInIn(BaseModel):
@@ -145,7 +147,7 @@ def is_hidden_overwork(r: Result, c: CheckInIn) -> bool:
 
 
 def rule_insights(req: InsightsRequest) -> dict:
-    """Fallback when Claude is unavailable. Matches the app's ruleInsights()."""
+    """Fallback when Gemini is unavailable. Matches the app's ruleInsights()."""
     f = set_facts(req.result)
     c = req.check_in
     red = is_hidden_overwork(req.result, c)
@@ -196,7 +198,7 @@ An athlete just filmed a set of bodyweight squats. Pose estimation measured ever
 - RFI, the Rep Fatigue Index, 0-100: how far a rep has drifted from the athlete's fresh reps. The breakdown rep is where RFI stayed high.
 The athlete then described the workout in their own words and rated their exhaustion from 1 to 10.
 
-Your job: decide whether the athlete may be overworking without realising it - their words and rating say the set was easy or went well, but the movement data shows clear fatigue - and explain, using the numbers you are given, where in the set they pushed too hard.
+Your job: explain whether the athlete may be overworking without realising it - their words and rating say the set was easy or went well, but the movement data shows clear fatigue - using only the numbers you are given.
 
 Rules:
 - Use only the numbers in the facts. Never invent measurements, reps or times.
@@ -229,13 +231,16 @@ OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
-_client: anthropic.Anthropic | None = None
+_client: genai.Client | None = None
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic()
+        key = os.getenv("GEMINI_API_KEY")
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY is not configured")
+        _client = genai.Client(api_key=key)
     return _client
 
 
@@ -255,32 +260,29 @@ def insights(req: InsightsRequest) -> dict:
     )
 
     try:
-        response = _get_client().beta.messages.create(
+        response = _get_client().models.generate_content(
             model=MODEL,
-            max_tokens=16000,
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",  # if Claude declines, the API retries on Anthropic's recommended fallback model
-            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
+            contents=prompt,
+            config={
+                "system_instruction": SYSTEM_PROMPT,
+                "temperature": 0.2,
+                "response_mime_type": "application/json",
+                "response_schema": OUTPUT_SCHEMA,
+            },
         )
-    except anthropic.APIConnectionError:
-        return rule_insights(req)
-    except anthropic.RateLimitError:
-        return rule_insights(req)
-    except anthropic.APIStatusError:
-        return rule_insights(req)
-    except anthropic.AnthropicError:  # e.g. no API key configured
+    except Exception:
+        # API errors, missing credentials, quota limits, and malformed responses all use the safe fallback.
         return rule_insights(req)
 
-    if response.stop_reason == "refusal":
-        return rule_insights(req)
-    text = next((b.text for b in response.content if b.type == "text"), None)
+    text = response.text
     if not text:
         return rule_insights(req)
-    out = json.loads(text)
+    try:
+        out = json.loads(text)
+    except json.JSONDecodeError:
+        return rule_insights(req)
 
-    # The rule is the floor; Claude can also raise a flag from the athlete's words when fatigue is high.
+    # The rule is the floor; Gemini can add context but cannot lower a deterministic flag.
     red = rule_flag or (out["hidden_overwork"] and req.result.overall_rfi > HIDDEN_OVERWORK_MIN_RFI)
     return {
         "flag": "red" if red else "none",

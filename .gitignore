@@ -48,3 +48,12 @@ example
 # generated native folders
 /ios
 /android
+
+# pose-analysis outputs; keep the compact validation summaries and winner metadata
+/results/annotated/
+/results/keypoints/
+/results/keypoints_degraded/
+/results/metrics/
+/results/plots/
+/results/served/
+/results/speed/

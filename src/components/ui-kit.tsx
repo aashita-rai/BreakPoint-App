@@ -117,17 +117,6 @@ export function StatusPill({ status, label }: { status: Status; label?: string }
   );
 }
 
-/** Red banner shown on any result that came from the placeholder demo bundle. */
-export function SyntheticBanner({ text }: { text?: string }) {
-  return (
-    <View style={styles.synthetic}>
-      <ThemedText type="smallBold" style={styles.syntheticText}>
-        {text ?? 'SYNTHETIC PLACEHOLDER — not a real analysis'}
-      </ThemedText>
-    </View>
-  );
-}
-
 /** UF-blue header band used at the top of every athlete screen. */
 export function HeroHeader({
   eyebrow,
@@ -176,17 +165,6 @@ const styles = StyleSheet.create({
   pillText: {
     fontSize: 12,
     lineHeight: 16,
-  },
-  synthetic: {
-    backgroundColor: '#D03A3A',
-    borderRadius: 10,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  syntheticText: {
-    color: '#FFFFFF',
-    textAlign: 'center',
-    letterSpacing: 0.5,
   },
   hero: {
     backgroundColor: UFBlue,

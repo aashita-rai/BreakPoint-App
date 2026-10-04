@@ -14,10 +14,11 @@ import { formatDate } from '@/lib/metrics';
 
 // README §9 Team tab: traffic-light list of athletes with tap-through to their charts.
 
-type Filter = 'all' | 'red' | 'flagged' | 'feedback';
+type Filter = 'all' | 'recent' | 'red' | 'flagged' | 'feedback';
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
+  { id: 'recent', label: 'Recent' },
   { id: 'red', label: 'Fatigued' },
   { id: 'flagged', label: 'Red flag, mismatch or pain' },
   { id: 'feedback', label: 'Needs feedback' },
@@ -58,10 +59,14 @@ export default function TeamScreen() {
     (a) =>
       (!q || a.name.toLowerCase().includes(q) || a.detail.toLowerCase().includes(q)) &&
       (filter === 'all' ||
+        (filter === 'recent' && a.workouts[0] != null) ||
         (filter === 'red' && latestStatus(a) === 'red') ||
         (filter === 'flagged' && isFlagged(a)) ||
         (filter === 'feedback' && needsFeedback(a)))
-  );
+  ).sort((a, b) => {
+    if (filter !== 'recent') return lastName(a.name).localeCompare(lastName(b.name));
+    return (b.workouts[0]?.date ?? '').localeCompare(a.workouts[0]?.date ?? '');
+  });
   const count = (s: Status) => roster.filter((a) => latestStatus(a) === s).length;
   const title = session.role === 'trainer' ? 'AT' : 'Coach';
 

@@ -1,15 +1,15 @@
 import { FATIGUE, STATUS_CUTOFFS } from '@/lib/config';
 import type {
-  AnalysisResult,
-  Baseline,
-  CheckIn,
-  MismatchStatus,
-  Report,
-  RepResult,
+    AnalysisResult,
+    Baseline,
+    CheckIn,
+    MismatchStatus,
+    Report,
+    RepResult,
 } from '@/lib/squat-types';
 
 // TypeScript port of the README §3 maths (code/analysis/fatigue.py on the server).
-// Used for simulated data and the offline demo. Real uploads use the server's numbers.
+// Used for offline fallback calculations. Real uploads use the server's numbers.
 
 export type RawRep = Omit<RepResult, 'rfi' | 'tempo_s' | 'descent_s' | 'ascent_s'>;
 

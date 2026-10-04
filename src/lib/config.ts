@@ -1,6 +1,6 @@
 // Mirror of the fatigue settings in code/config.yaml (README §3).
-// The server's numbers always win: the app only uses these to compute RFI for simulated
-// and placeholder data, to colour traffic lights, and for the offline message templates.
+// The server's numbers always win: the app only uses these for offline fallback calculations
+// and to colour traffic lights and drive the offline message templates.
 // Values are illustrative, tuned on one video, and not clinically validated.
 // TODO: copy breakdownThreshold and the status cutoffs from code/config.yaml.
 
@@ -22,7 +22,7 @@ export const FATIGUE = {
 /**
  * AI analyzer red flag ("hidden overwork"): the set's overall RFI is above `minRfi` but the
  * athlete rated their exhaustion at or below `maxExhaustion`, or `FATIGUE.mismatchGap`
- * below what the data suggests. The server applies the same rule before asking Claude.
+ * below what the data suggests. The server applies the same rule before asking Gemini.
  */
 export const HIDDEN_OVERWORK = { minRfi: 50, maxExhaustion: 3 } as const;
 

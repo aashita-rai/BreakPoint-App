@@ -1,1 +1,0 @@
-{"model": "vitpose-base", "device": "cpu", "requested_device": "cpu", "fps": 2.2721398945066698, "p95_ms": 444.2062652204186, "n": 150, "size_mb": null}

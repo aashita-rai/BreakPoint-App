@@ -3,8 +3,8 @@ import { ApiError, hasApi, uploadAndAnalyze } from '@/services/api';
 
 import demoBundle from '../../assets/demo/result.json';
 
-// Runs one analysis for the Processing screen: either the real server (upload → pose
-// model → JSON) or the bundled demo result, which works with no network at all.
+// Runs one analysis for the Processing screen: either the real server (upload -> pose
+// model -> JSON) or the bundled real analysis result, which works with no network.
 
 export const ANALYSIS_STAGES = [
   'Uploading video',
@@ -23,9 +23,7 @@ export type AnalyzeCallbacks = {
 
 /** The demo result bundled with the app (written by code/make_demo_bundle.py). */
 export const DEMO_RESULT = demoBundle as AnalysisResult;
-// When make_demo_bundle.py also writes the annotated video, add it here, e.g.:
-// export const DEMO_VIDEO = require('../../assets/demo/annotated.mp4');
-export const DEMO_VIDEO: number | null = null;
+export const DEMO_VIDEO: number = require('../../assets/demo/annotated.mp4');
 
 export class NoServerError extends Error {}
 

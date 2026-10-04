@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { HeaderLinks } from '@/components/header-links';
+import { InsightsView } from '@/components/insights-view';
 import { ReportView } from '@/components/report-view';
 import { ThemedText } from '@/components/themed-text';
 import { Button, Card, HeroHeader } from '@/components/ui-kit';
@@ -29,6 +30,7 @@ export default function ReportScreen() {
                 For: <ThemedText type="smallBold">{workout.title}</ThemedText> · {formatDate(workout.date)} · RFI{' '}
                 {workout.result.overall_rfi}
               </ThemedText>
+              {workout.insights && <InsightsView insights={workout.insights} audience="athlete" />}
               <ReportView report={workout.report} checkIn={workout.checkIn} />
               <Button
                 title="View this set's results"
@@ -43,7 +45,7 @@ export default function ReportScreen() {
                 After you check in on a set, you&apos;ll see how your reported effort compares with what the video showed, plus
                 messages for you, your coach and your athletic trainer.
               </ThemedText>
-              <Button title="Go to Check-In" icon="checkin" onPress={() => router.navigate('/check-in')} />
+              <Button title="View your workouts" icon="workouts" onPress={() => router.navigate('/workouts')} />
             </Card>
           )}
         </View>

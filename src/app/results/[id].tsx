@@ -7,7 +7,7 @@ import { InsightsView } from '@/components/insights-view';
 import { ReportView } from '@/components/report-view';
 import { ResultVideo } from '@/components/result-video';
 import { ThemedText } from '@/components/themed-text';
-import { Button, Card, HeroHeader, Icon, StatTile, StatusPill, SyntheticBanner } from '@/components/ui-kit';
+import { Button, Card, HeroHeader, Icon, StatTile, StatusPill } from '@/components/ui-kit';
 import { MaxContentWidth, PastelOrange, Spacing } from '@/constants/theme';
 import { findWorkout, isStaff, useStore } from '@/data/store';
 import { useTheme } from '@/hooks/use-theme';
@@ -57,10 +57,22 @@ export default function ResultsScreen() {
         />
 
         <View style={styles.body}>
-          {r.synthetic && !workout.simulated && <SyntheticBanner />}
-
           {videoSource != null && (
-            <ResultVideo source={videoSource} annotated={!!r.annotated_video_url || (isDemo && DEMO_VIDEO != null)} />
+            <ResultVideo source={videoSource} annotated={!!r.annotated_video_url || isDemo} />
+          )}
+
+          {r.quality && (!r.quality.usable || r.quality.warnings.length > 0) && (
+            <Card style={{ borderColor: theme.statusAmber, borderWidth: 1 }}>
+              <ThemedText type="smallBold">Video quality note</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {r.quality.usable ? 'The result is usable, but some tracking was uncertain.' : 'Retake this set with your whole body visible and the phone steady.'}
+              </ThemedText>
+              {r.quality.warnings.map((warning) => (
+                <ThemedText key={warning} type="small" themeColor="textSecondary">
+                  • {warning}
+                </ThemedText>
+              ))}
+            </Card>
           )}
 
           <View style={[styles.banner, { backgroundColor: theme.accent }]}>
@@ -145,9 +157,22 @@ export default function ResultsScreen() {
           </Card>
 
           <Card>
+            <ThemedText style={styles.cardTitle}>Form details</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Secondary measurements from the pose track. They add context to depth and speed; they are not clinical measurements.
+            </ThemedText>
+            <View style={styles.detailGrid}>
+              <StatTile label="Baseline knee angle" value={`${r.reps.length ? Math.round(r.reps[0].min_knee_angle) : '–'}°`} />
+              <StatTile label="Deepest knee angle" value={`${r.reps.length ? Math.round(Math.min(...r.reps.map((rep) => rep.min_knee_angle))) : '–'}°`} />
+              <StatTile label="Peak rise speed" value={`${r.reps.length ? Math.max(...r.reps.map((rep) => rep.peak_ascent_speed)).toFixed(2) : '–'} L/s`} />
+              <StatTile label="Bottom hip / knee" value={r.reps.length ? r.reps[r.reps.length - 1].hip_below_knee.toFixed(2) : '–'} />
+            </View>
+          </Card>
+
+          <Card>
             <ThemedText style={styles.cardTitle}>Rep table</ThemedText>
             <View style={[styles.tableRow, { borderBottomColor: theme.border }]}>
-              {['Rep', 'Tempo', 'Depth', 'Speed', 'Status'].map((h) => (
+              {['Rep', 'Tempo', 'Depth', 'Angle', 'Speed', 'Status'].map((h) => (
                 <ThemedText key={h} type="smallBold" themeColor="textSecondary" style={h === 'Status' ? styles.statusCell : styles.cell}>
                   {h}
                 </ThemedText>
@@ -163,6 +188,9 @@ export default function ResultsScreen() {
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
                   {formatDepth(rep.depth)}
+                </ThemedText>
+                <ThemedText type="small" style={styles.cell}>
+                  {Math.round(rep.min_knee_angle)}°
                 </ThemedText>
                 <ThemedText type="small" style={styles.cell}>
                   {formatSpeed(rep.ascent_speed)}
@@ -275,6 +303,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     paddingVertical: 6,
     paddingHorizontal: 4,
+  },
+  detailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
   },
   cell: {
     flex: 1,

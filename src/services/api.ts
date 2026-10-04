@@ -1,5 +1,5 @@
-import { Platform } from 'react-native';
 import type { AnalysisResult, CheckIn, Insights, Report } from '@/lib/squat-types';
+import { Platform } from 'react-native';
 
 // Thin client for the FastAPI server in code/api/ (README §9).
 // Start the app with EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 npx expo start -c
@@ -140,7 +140,7 @@ export async function transcribeAudio(uri: string): Promise<string> {
   }
 }
 
-/** AI analyzer: asks Claude (on the server) whether the athlete is overworking without realising it. */
+/** AI analyzer: asks Gemini (on the server) to explain measured fatigue and the check-in. */
 export async function requestInsights(result: AnalysisResult, checkIn: CheckIn, athleteName: string): Promise<Insights> {
   if (!hasApi) throw new ApiError('No server configured.');
   const controller = new AbortController();
@@ -187,7 +187,7 @@ function normalizeInsights(body: Json): Insights {
     insights: (body.insights as unknown[]).filter((s): s is string => typeof s === 'string').slice(0, 4),
     athlete_note: body.athlete_note as string,
     coach_note: body.coach_note as string,
-    // The server falls back to its own rules if Claude is unavailable.
+    // The server falls back to its own rules if Gemini is unavailable.
     source: body.source === 'rules' ? 'rules' : 'ai',
   };
 }
@@ -200,7 +200,21 @@ function normalizeResult(body: Json): AnalysisResult {
   if (!reps || !body.baseline || !isNum(body.overall_rfi)) {
     throw new ApiError('The server response is missing reps, baseline or overall_rfi.');
   }
-  const fields = ['i', 'start_t', 'bottom_t', 'end_t', 'tempo_s', 'descent_s', 'ascent_s', 'depth', 'ascent_speed', 'rfi'];
+  const fields = [
+    'i',
+    'start_t',
+    'bottom_t',
+    'end_t',
+    'tempo_s',
+    'descent_s',
+    'ascent_s',
+    'depth',
+    'ascent_speed',
+    'peak_ascent_speed',
+    'min_knee_angle',
+    'hip_below_knee',
+    'rfi',
+  ];
   for (const r of reps) {
     const missing = fields.filter((f) => !isNum(r[f]));
     if (missing.length) throw new ApiError(`A rep in the server response is missing: ${missing.join(', ')}.`);

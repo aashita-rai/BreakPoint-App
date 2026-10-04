@@ -13,8 +13,16 @@ export type RepResult = {
   ascent_s: number;
   depth: number;
   ascent_speed: number;
+  /** Peak upward hip speed during the ascent, in leg-lengths per second. */
+  peak_ascent_speed: number;
+  /** Minimum hip-knee-ankle angle during the rep, in degrees. */
+  min_knee_angle: number;
+  /** Hip height relative to the knee at the bottom, normalized by leg length. */
+  hip_below_knee: number;
   /** Rep Fatigue Index, 0-100. */
   rfi: number;
+  /** Conservative, measurement-derived cues shown during this rep. */
+  form_warnings?: string[];
 };
 
 export type Baseline = {
@@ -34,8 +42,11 @@ export type AnalysisResult = {
   breakdown_rep: number | null;
   overall_rfi: number;
   annotated_video_url?: string | null;
-  /** Set on the placeholder demo bundle until make_demo_bundle.py writes the real one. */
-  synthetic?: boolean;
+  quality?: {
+    score: number;
+    usable: boolean;
+    warnings: string[];
+  };
 };
 
 // ── Self-report (README §3 "Self-report mismatch", §9 Check-In / Report) ────
@@ -81,7 +92,7 @@ export type Insights = {
   athlete_note: string;
   /** Shown to coaches and athletic trainers. */
   coach_note: string;
-  /** 'ai' = written by Claude on the server; 'rules' = the app's built-in fallback. */
+  /** 'ai' = written by Gemini on the server; 'rules' = the app's built-in fallback. */
   source: 'ai' | 'rules';
 };
 
@@ -98,6 +109,4 @@ export type Workout = {
   checkIn?: CheckIn;
   report?: Report;
   insights?: Insights;
-  /** Generated sample data (team view), not a real analysis. */
-  simulated?: boolean;
 };

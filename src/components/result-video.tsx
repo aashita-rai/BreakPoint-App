@@ -5,11 +5,12 @@ import { ThemedText } from '@/components/themed-text';
 import { Card } from '@/components/ui-kit';
 
 /** Plays the annotated (skeleton overlay) video, or the original clip if there is no overlay. */
+/** Plays the annotated video, or the original clip if no server overlay is available. */
 export function ResultVideo({ source, annotated }: { source: string | number; annotated: boolean }) {
   const player = useVideoPlayer(source);
   return (
     <Card>
-      <ThemedText type="smallBold">{annotated ? 'Skeleton overlay' : 'Your video (no overlay yet)'}</ThemedText>
+      <ThemedText type="smallBold">{annotated ? 'Annotated movement video' : 'Your video (no overlay yet)'}</ThemedText>
       <VideoView player={player} nativeControls contentFit="contain" style={styles.video} />
     </Card>
   );

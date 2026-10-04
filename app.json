@@ -54,7 +54,8 @@
         {
           "microphonePermission": "BreakPoint records your voice so you can speak your check-in and feedback instead of typing."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

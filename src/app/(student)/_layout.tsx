@@ -3,7 +3,7 @@ import { Tabs } from 'expo-router';
 import { Icon } from '@/components/ui-kit';
 import { useTheme } from '@/hooks/use-theme';
 
-// README §9 tabs: Capture, Results, Check-In, Report (+ the athlete's coach feedback).
+// Check-in opens after analysis and from a result, so it does not compete with the primary tabs.
 export default function StudentTabs() {
   const theme = useTheme();
   return (
@@ -21,10 +21,6 @@ export default function StudentTabs() {
       <Tabs.Screen
         name="capture"
         options={{ title: 'Capture', tabBarIcon: ({ color }) => <Icon name="camera" size={24} color={color} /> }}
-      />
-      <Tabs.Screen
-        name="check-in"
-        options={{ title: 'Check-In', tabBarIcon: ({ color }) => <Icon name="checkin" size={24} color={color} /> }}
       />
       <Tabs.Screen
         name="report"

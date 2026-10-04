@@ -1,6 +1,7 @@
 {
  "reference_model": "rtmpose-x",
- "serve_model": "mediapipe-heavy",
+ "serve_model": "yolo11n-pose",
+ "serve_reason": "Mac-compatible CPU serving; MediaPipe crashes on the demo Mac",
  "gt_mode": "labels",
  "same_model": false
 }

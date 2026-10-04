@@ -11,7 +11,6 @@ RESULTS = ROOT / "results"
 KEYPOINTS = RESULTS / "keypoints"
 KEYPOINTS_DEG = RESULTS / "keypoints_degraded"
 METRICS = RESULTS / "metrics"
-PLOTS = RESULTS / "plots"
 SPEED = RESULTS / "speed"
 MODEL_CACHE = ROOT / "model_cache"
 

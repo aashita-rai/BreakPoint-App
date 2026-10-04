@@ -23,3 +23,17 @@ def rep_metrics(rep, h, joints, L, fps):
         "hip_below_knee": float((joints["hip"][b, 1] - joints["knee"][b, 1]) / L),
         "clean": rep["clean"],
     }
+
+
+def form_warnings(rep, baseline):
+    """Return conservative, non-diagnostic cues tied to this rep's measurements."""
+    warnings = []
+    if rep["depth"] < baseline["depth"] * 0.80:
+        warnings.append("Depth is getting shallower; slow down and keep a consistent range.")
+    if rep["ascent_s"] > baseline["tempo_s"] * 0.70:
+        warnings.append("The rise is slowing; stop the set if you cannot keep control.")
+    if rep["min_knee_angle"] < 45:
+        warnings.append("Knee angle is very closed; use a comfortable depth and stay controlled.")
+    if rep["hip_below_knee"] < -0.05:
+        warnings.append("Hips stayed above knee level; aim for a consistent depth.")
+    return warnings[:2]

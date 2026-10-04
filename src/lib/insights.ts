@@ -2,8 +2,8 @@ import { FATIGUE, HIDDEN_OVERWORK } from '@/lib/config';
 import { expectedRpe } from '@/lib/fatigue';
 import type { AnalysisResult, CheckIn, Insights } from '@/lib/squat-types';
 
-// Rule-based version of the AI analyzer (server: POST /insights, Claude).
-// Used offline, for demo/simulated data, and whenever the server call fails.
+// Rule-based version of the AI analyzer (server: POST /insights, Gemini).
+// Used offline and whenever the server call fails.
 // The red-flag decision itself is the same rule on both sides, so it never depends
 // on the network.
 

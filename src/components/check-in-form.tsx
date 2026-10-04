@@ -60,9 +60,8 @@ export function CheckInForm({
       notes: opinion.trim(),
       date: new Date().toISOString(),
     };
-    // The server writes these with Claude; the built-in rules are the fallback so this
-    // always works, even offline. The demo placeholder never goes to the server.
-    const useServer = hasApi && !workout.result.synthetic;
+    // The server may use an LLM, but deterministic templates remain the fallback.
+    const useServer = hasApi;
     const [report, insights] = await Promise.all([
       useServer
         ? requestReport(workout.result, checkIn, athleteName).catch(() => templateReport(workout.result, checkIn, athleteName))
