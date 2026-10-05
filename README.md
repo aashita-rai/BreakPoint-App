@@ -4,6 +4,14 @@ BreakPoint turns a side-view bodyweight-squat video into an objective fatigue si
 
 It is a screening aid for human review. It does not diagnose, clear an athlete to play, or replace an athletic trainer or clinician.
 
+## 🏆 Award
+
+**2nd Place — [Dream Team Engineering Designathon 2026](https://dte-designathon-2026.devpost.com/)**
+
+BreakPoint won **2nd Place** at the Dream Team Engineering Designathon 2026.
+
+🔗 [View BreakPoint on Devpost](https://devpost.com/software/breakpoint-3o1y58)
+
 ## Product Spec
 
 ### Problem and pain points
