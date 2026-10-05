@@ -30,6 +30,7 @@ const ICONS = {
   info: { ios: 'cross.case.fill', android: 'medical_services', web: 'medical_services' },
   share: { ios: 'square.and.arrow.up', android: 'share', web: 'share' },
   warning: { ios: 'exclamationmark.triangle.fill', android: 'warning', web: 'warning' },
+  flag: { ios: 'flag.fill', android: 'flag', web: 'flag' },
   play: { ios: 'play.rectangle.fill', android: 'smart_display', web: 'smart_display' },
 } as const;
 

@@ -7,11 +7,15 @@
     "icon": "./assets/images/icon.png",
     "scheme": "breakpoint",
     "userInterfaceStyle": "automatic",
-    "ios": {},
+    "ios": {
+      "icon": "./assets/images/icon.png"
+    },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#F5C2A3",
-        "foregroundImage": "./assets/images/android-icon-foreground.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -32,9 +36,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F5C2A3",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/images/breakpoint-logo.png",
+          "imageWidth": 180
         }
       ],
       [

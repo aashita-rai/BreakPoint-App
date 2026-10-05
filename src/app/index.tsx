@@ -70,13 +70,12 @@ export default function SignInScreen() {
       <View style={styles.hero}>
         <SafeAreaView edges={['top']} style={styles.heroInner}>
           <Image
-            source={require('@/assets/images/logo.png')}
+            source={require('@/assets/images/breakpoint-wordmark.png')}
             style={styles.logo}
             contentFit="contain"
             accessibilityLabel="BreakPoint logo"
           />
-          <ThemedText style={styles.brand}>BreakPoint</ThemedText>
-          <ThemedText style={styles.tagline}>Find your breaking point. Train past it.</ThemedText>
+          <ThemedText style={styles.tagline}>Find your breaking point.</ThemedText>
         </SafeAreaView>
       </View>
 
@@ -165,22 +164,19 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.five,
     gap: Spacing.two,
   },
+  // Wordmark artwork is 543 × 136 (transparent margins trimmed). Fills the hero's width,
+  // capped so it doesn't get oversized on tablets and web.
   logo: {
-    width: 112,
-    height: 117,
-    borderRadius: 20,
-  },
-  brand: {
-    color: '#FFFFFF',
-    fontSize: 44,
-    lineHeight: 50,
-    fontWeight: 900,
-    letterSpacing: -1,
+    width: '100%',
+    maxWidth: 520,
+    aspectRatio: 543 / 136,
+    alignSelf: 'center',
   },
   tagline: {
     color: PastelOrange,
     fontSize: 17,
     fontWeight: 600,
+    textAlign: 'center',
   },
   form: {
     width: '100%',

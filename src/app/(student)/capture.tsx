@@ -55,7 +55,14 @@ export default function CaptureScreen() {
       );
       return;
     }
-    const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['videos'], quality: 1 };
+    // 720p H.264 is plenty for pose estimation and makes the upload several times smaller than 4K
+    // (faster, and kinder to slow Wi-Fi and the Cloudflare tunnel). iOS only; Android keeps the original.
+    const options: ImagePicker.ImagePickerOptions = {
+      mediaTypes: ['videos'],
+      quality: 1,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.IFrame1280x720,
+    };
     const result =
       source === 'camera'
         ? await ImagePicker.launchCameraAsync(options)

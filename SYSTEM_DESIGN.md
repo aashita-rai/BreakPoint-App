@@ -162,6 +162,18 @@ The first version sent the video in **one long request** (`POST /analyze`) and w
 - Even when the upload was tracked, the server then spent a minute or more running the pose model and rendering video **without reporting anything**, so the bar froze.
 - Over a **Cloudflare quick tunnel**, any request that takes longer than about **100 seconds** without a response is cut off (HTTP 524). A 2-minute analysis simply failed.
 
+### The upload: small pieces
+
+The first fix (below) solved the long *analysis* request, but uploads still failed with **524 at about 20%** on campus Wi-Fi. The phone streams the file, and Cloudflare cut it off once the upload passed ~100 s. Now:
+
+- On iOS the picker exports **720p H.264** (`videoExportPreset`), which is plenty for pose estimation and several times smaller than 4K.
+- The app sends the video in **2 MB pieces**, one short request each (`POST /analyze/uploads` → `PUT /analyze/uploads/{id}?offset=&length=` × N → `POST …/finish`). A slow phone still sends each piece in seconds, so no request comes near 100 s, and the progress bar shows real upload progress.
+- A failed piece is **retried** (3 attempts). A piece the server already has is acknowledged, not appended twice.
+- Each piece carries its **length**, and the server rejects a mismatch. We found that a body sent with chunked transfer encoding can arrive through `cloudflared` with framing bytes mixed in, which would silently corrupt the video.
+- `finish` checks that every byte arrived before starting the analysis job.
+
+Tested through a real quick tunnel: a 104 MB video, throttled to take **209 s**, uploaded in 50 pieces with no errors and produced the same 73 reps as the original.
+
 ### The design now: background job + polling
 
 ```text
@@ -489,7 +501,7 @@ EXPO_PUBLIC_API_URL=https://<random>.trycloudflare.com \
 
 ### Things Cloudflare changes, and how we handled them
 
-- **~100-second response limit (HTTP 524).** This is why analysis uses a background job with polling (Section 6). No single request lasts long.
+- **~100-second response limit (HTTP 524), including slow uploads.** This is why the video goes up in 2 MB pieces and analysis runs as a background job with polling (Section 6). No single request lasts long. Gemini is also capped at 45 s per report for the same reason.
 - **The URL changes every restart.** Restart Expo with the new `EXPO_PUBLIC_API_URL` and `-c`, which clears the cache so the new value is picked up.
 - **No access control.** Anyone with the URL can reach the API while the tunnel runs, upload videos, and use the Gemini quota. The app no longer shows the URL on the Capture screen. Stop `cloudflared` as soon as the demo ends. That's acceptable for a demo but not for real athlete data. Production would use a **named** Cloudflare Tunnel with **Cloudflare Access** (login required) or a properly hosted server.
 - **CORS** is open (`allow_origins=["*"]`) so the web build can call the API through any tunnel URL. This would be locked down in production.

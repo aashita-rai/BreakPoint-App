@@ -74,7 +74,11 @@ export function ReportView({ report, checkIn, result }: { report: Report; checkI
       </Pressable>
 
       <ThemedText type="small" themeColor="textSecondary">
-        {report.source === 'gemini' ? 'Messages written by Gemini from your measured movement and check-in.' : ''}{' '}
+        {report.source === 'gemini'
+          ? 'Messages written by Gemini from your measured movement and check-in.'
+          : report.source === 'sample'
+            ? 'Sample data for the demo roster, not a real check-in.'
+            : ''}{' '}
         This is a screening aid that flags for human review. It is not a diagnosis.
       </ThemedText>
     </View>

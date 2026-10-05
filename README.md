@@ -4,6 +4,14 @@ BreakPoint turns a side-view bodyweight-squat video into an objective fatigue si
 
 It is a screening aid for human review. It does not diagnose, clear an athlete to play, or replace an athletic trainer or clinician.
 
+## 🏆 Award
+
+**2nd Place — [Dream Team Engineering Designathon 2026](https://dte-designathon-2026.devpost.com/)**
+
+BreakPoint won **2nd Place** at the Dream Team Engineering Designathon 2026.
+
+🔗 [View BreakPoint on Devpost](https://devpost.com/software/breakpoint-3o1y58)
+
 ## Product Spec
 
 ### Problem and pain points
@@ -94,7 +102,10 @@ The app expects:
 | Route | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Server availability and serving model |
-| `/analyze/jobs` | POST multipart `file`, `squat_variation` | Starts a background analysis and returns `{job_id}` immediately (used by the app) |
+| `/analyze/uploads` | POST JSON `{filename, size}` | Starts a chunked video upload, returns `{upload_id}` (used by the app) |
+| `/analyze/uploads/{id}?offset=&length=` | PUT raw bytes | One ~2 MB piece of the video; a repeated piece is acknowledged, not re-appended |
+| `/analyze/uploads/{id}/finish` | POST form `squat_variation` | Checks every byte arrived, starts the background analysis, returns `{job_id}` |
+| `/analyze/jobs` | POST multipart `file`, `squat_variation` | Whole video in one request, then a background job (fine on a LAN; not used by the app) |
 | `/analyze/jobs/{job_id}` | GET | Job `status`, `stage` (`queued`, `pose`, `analysis`, `render`, `done`), real `progress` 0-1, and the `result` or `error` |
 | `/analyze` | POST multipart `file` | Same analysis in one blocking request (scripts and LAN testing; long videos can exceed Cloudflare's ~100 s response limit) |
 | `/insights` | POST JSON | Gemini explanation, mismatch status, athlete/coach/trainer messages, and pain escalation (used by the app) |
@@ -118,7 +129,7 @@ If Gemini is unavailable (no `GEMINI_API_KEY`, quota, network), the app does **n
 
 ## Data and Privacy
 
-The app store is session-only and contains no generated team roster or generated workouts. Athletes appear in the coach view after they sign in; workouts appear after real analysis. The bundled offline demo is a precomputed analysis asset, not a generated team record. The server processes uploaded video for the request and serves the annotated result; production deployments need explicit retention, access control, consent, and deletion policies, especially for minors.
+The app store is session-only. The football roster is pre-filled with sample squat sets (`src/data/sample-workouts.ts`) so the coach and trainer dashboard shows a realistic spread of fatigue levels, flags and workout counts; these are generated, not real athlete data. Other athletes appear in the coach view after they sign in, and real workouts are added after analysis. The bundled offline demo is a precomputed analysis asset, not a generated team record. The server processes uploaded video for the request and serves the annotated result; production deployments need explicit retention, access control, consent, and deletion policies, especially for minors.
 
 The local FastAPI server stores compact analysis summaries and report flags in `results/breakpoint.sqlite3` and exposes `/dashboard/weekly`. It does not store raw videos in the database. This local database is suitable for the hackathon demo only; production use still needs authentication, athlete ownership, encrypted storage, retention limits, and access controls.
 
@@ -245,7 +256,7 @@ Scan the new QR code. Keep all three terminals open.
 Things to know about quick tunnels:
 
 - The URL changes every time `cloudflared` restarts. When it changes, restart Expo with the new `EXPO_PUBLIC_API_URL` and `-c`.
-- Cloudflare closes any single request that takes longer than about 100 seconds (HTTP 524). That is why the app uploads to `/analyze/jobs` and polls for progress instead of waiting on one long `/analyze` request.
+- Cloudflare closes any single request that takes longer than about 100 seconds (HTTP 524), **including a slow upload**. That is why the app sends the video in ~2 MB pieces (`/analyze/uploads`) and then polls the analysis job, instead of one long upload or one long `/analyze` request. Tested through a quick tunnel: a 104 MB video uploaded over 209 s in 50 pieces with no errors. On iOS the picker also exports 720p H.264, which makes uploads several times smaller.
 - Quick tunnels are for development and demos: no uptime guarantee and **no access control**. Anyone with the URL can upload videos to your laptop and spend your Gemini quota. The app no longer displays the URL, but don't share it, and **stop `cloudflared` (Ctrl+C) as soon as the demo ends.** Production would use a named Cloudflare Tunnel with Cloudflare Access, or a hosted server.
 
 ### No server available

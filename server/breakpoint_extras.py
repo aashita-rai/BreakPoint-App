@@ -24,6 +24,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -41,6 +42,10 @@ MISMATCH_GAP = 3  # ... or exhaustion this far below expected (RFI / 10)
 FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
 MODELS = list(dict.fromkeys(([os.environ["GEMINI_MODEL"]] if os.getenv("GEMINI_MODEL") else []) + FALLBACK_MODELS))
 RETRYABLE_CODES = {404, 408, 429, 500, 503, 504}
+# Total time /insights may spend on Gemini, across fallback models and the wording rewrite. Must stay under the
+# app's 60 s request timeout and Cloudflare's ~100 s limit (HTTP 524), or the app gets a timeout instead of a reason.
+GEMINI_BUDGET_S = 45
+PER_CALL_TIMEOUT_S = 25
 # A pain escalation must point to a person; if Gemini's wording doesn't, the server appends this.
 HUMAN_REFERRAL = re.compile(r"trainer|doctor|physician|clinician|medical", re.I)
 PAIN_REFERRAL_GUARD = ("Please talk to your athletic trainer or a doctor before training again, and get urgent care "
@@ -307,14 +312,19 @@ def _get_client() -> genai.Client:
         key = os.getenv("GEMINI_API_KEY")
         if not key:
             raise RuntimeError("GEMINI_API_KEY is not configured")
-        _client = genai.Client(api_key=key, http_options={"timeout": 25_000})   # ms; leaves room for a fallback
+        _client = genai.Client(api_key=key)
     return _client
 
 
-def _generate(prompt: str) -> dict:
-    """One structured Gemini call, falling through MODELS when a model is busy, retired, or times out."""
+def _generate(prompt: str, deadline: float) -> dict:
+    """One structured Gemini call, falling through MODELS when a model is busy, retired, or times out.
+    Gives up once `deadline` (time.monotonic()) is near, so the request never outlives the app or the tunnel."""
     response, errors = None, []
     for model in MODELS:
+        remaining = deadline - time.monotonic()
+        if remaining < 5:
+            errors.append(f"{model}: skipped, out of time ({GEMINI_BUDGET_S}s budget)")
+            break
         try:
             response = _get_client().models.generate_content(
                 model=model,
@@ -324,6 +334,7 @@ def _generate(prompt: str) -> dict:
                     "temperature": 0.2,
                     "response_mime_type": "application/json",
                     "response_schema": OUTPUT_SCHEMA,
+                    "http_options": {"timeout": int(min(PER_CALL_TIMEOUT_S, remaining) * 1000)},   # ms
                 },
             )
             break
@@ -362,12 +373,13 @@ def insights(req: InsightsRequest) -> dict:
     )
 
     allow_angles = "trusted_knee_angle_deg" in facts
-    out = _generate(prompt)
+    deadline = time.monotonic() + GEMINI_BUDGET_S
+    out = _generate(prompt, deadline)
     hits = banned_wording(out, allow_angles)
     if hits:   # e.g. "prior to clearing M for further loading": ask once for a rewrite, never ship it
         print(f"[insights] banned wording {hits}; asking for a rewrite", flush=True)
         out = _generate(prompt + f"\n\nYour previous answer used wording that is not allowed here: {hits}. "
-                                 "Rewrite every field without that wording, following all the rules.")
+                                 "Rewrite every field without that wording, following all the rules.", deadline)
         hits = banned_wording(out, allow_angles)
         if hits:
             raise HTTPException(502, f"Gemini's wording broke a safety rule twice ({', '.join(hits)}); not shown.")

@@ -1,11 +1,12 @@
 import type { AnalysisResult, CheckIn, Insights, MismatchStatus, SquatVariation } from '@/lib/squat-types';
-import { Platform } from 'react-native';
 
 // Thin client for the FastAPI server in code/api/main.py.
 // Start the app with EXPO_PUBLIC_API_URL=http://<laptop-LAN-IP>:8000 npx expo start -c
 export const ENDPOINTS = {
   health: '/health',
-  /** POST starts a background analysis and returns { job_id }; GET /analyze/jobs/{id} polls it. */
+  /** Chunked video upload: POST starts it, PUT /{id}?offset= sends a piece, POST /{id}/finish starts the job. */
+  uploads: '/analyze/uploads',
+  /** GET /analyze/jobs/{id} polls a running analysis. */
   analysisJobs: '/analyze/jobs',
   // Added by server/breakpoint_extras.py:
   transcribe: '/transcribe',
@@ -101,60 +102,86 @@ export async function uploadAndAnalyze(
   }
 }
 
-function startAnalysisJob(
+/** Upload piece size: small enough that even a slow phone connection sends one well within Cloudflare's ~100 s limit. */
+const CHUNK_BYTES = 2 * 1024 * 1024;
+const CHUNK_TIMEOUT_MS = 60_000;
+const CHUNK_RETRIES = 3;
+
+/**
+ * Sends the video in CHUNK_BYTES pieces (one short request each), then starts the analysis job.
+ * One long upload request fails through a Cloudflare quick tunnel once it passes ~100 s (HTTP 524),
+ * which a phone video on campus Wi-Fi easily does. Each piece is retried on failure.
+ */
+async function startAnalysisJob(
   uri: string,
   { onUploadProgress, signal, squatVariation }: { onUploadProgress?: (fraction: number) => void; signal?: AbortSignal; squatVariation?: SquatVariation }
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!hasApi) return reject(new ApiError('No server configured.'));
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}${ENDPOINTS.analysisJobs}`);
-    xhr.responseType = 'text';
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && e.total > 0) onUploadProgress?.(e.loaded / e.total);
-    };
-    xhr.onload = () => {
-      if (xhr.status === 404 || xhr.status === 405) {
-        return reject(new ApiError('This server has no /analyze/jobs route. Restart FastAPI so it picks up the latest code.'));
-      }
-      if (xhr.status < 200 || xhr.status >= 300) {
-        return reject(new ApiError(`Server error ${xhr.status}${detailOf(xhr.responseText)}`));
-      }
-      try {
-        const id = JSON.parse(xhr.responseText)?.job_id;
-        if (typeof id !== 'string') throw new Error();
-        onUploadProgress?.(1);
-        resolve(id);
-      } catch {
-        reject(new ApiError('The server sent a response the app could not read.'));
-      }
-    };
-    xhr.onerror = () => reject(new ApiError(`Could not reach the server at ${API_URL}.`));
-    signal?.addEventListener('abort', () => {
-      xhr.abort();
-      reject(new ApiError('aborted'));
-    });
+  if (!hasApi) throw new ApiError('No server configured.');
+  let video: Blob;
+  try {
+    video = await (await fetch(uri)).blob();
+  } catch {
+    throw new ApiError('Could not read the selected video.');
+  }
+  const name = uri.split('/').pop() || 'squats.mp4';
+  const filename = /\.(mp4|mov|m4v|webm)$/i.test(name) ? name : video.type.includes('quicktime') ? 'clip.mov' : 'clip.mp4';
 
-    const form = new FormData();
-    form.append('squat_variation', squatVariation ?? 'standard');
-    const name = uri.split('/').pop() || 'squats.mp4';
-    if (Platform.OS === 'web') {
-      // Browsers need a real Blob; the { uri, name, type } object only works on iOS/Android.
-      fetch(uri)
-        .then((r) => r.blob())
-        .then((blob) => {
-          const fname = /\.(mp4|mov|m4v|webm)$/i.test(name) ? name : (blob.type.includes('quicktime') ? 'clip.mov' : 'clip.mp4');
-          form.append(UPLOAD_FIELD, blob, fname);
-          xhr.send(form);
-        })
-        .catch(() => reject(new ApiError('Could not read the selected video.')));
-    } else {
-      // React Native's FormData accepts { uri, name, type } for files.
-      const type = /\.mov$/i.test(name) ? 'video/quicktime' : 'video/mp4';
-      form.append(UPLOAD_FIELD, { uri, name, type } as unknown as Blob);
-      xhr.send(form);
+  const start = await request(`${ENDPOINTS.uploads}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, size: video.size }),
+  }, signal);
+  if (start.status === 404 || start.status === 405) {
+    throw new ApiError('This server has no /analyze/uploads route. Restart FastAPI so it picks up the latest code.');
+  }
+  if (!start.ok) throw new ApiError(await errorText(start));
+  const { upload_id: uploadId } = (await start.json()) as { upload_id: string };
+
+  for (let offset = 0; offset < video.size; offset += CHUNK_BYTES) {
+    const piece = video.slice(offset, Math.min(video.size, offset + CHUNK_BYTES));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await request(`${ENDPOINTS.uploads}/${uploadId}?offset=${offset}&length=${piece.size}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: piece,
+        }, signal);
+        if (!res.ok) throw new ApiError(await errorText(res));
+        break;
+      } catch (e) {
+        if (signal?.aborted) throw new ApiError('aborted');
+        if (attempt >= CHUNK_RETRIES) throw e instanceof ApiError ? e : new ApiError(`Upload failed: lost contact with the server at ${API_URL}.`);
+        await sleep(1000 * attempt, signal);
+      }
     }
-  });
+    onUploadProgress?.(Math.min(1, (offset + CHUNK_BYTES) / video.size));
+  }
+
+  const form = new FormData();
+  form.append('squat_variation', squatVariation ?? 'standard');
+  const done = await request(`${ENDPOINTS.uploads}/${uploadId}/finish`, { method: 'POST', body: form }, signal);
+  if (!done.ok) throw new ApiError(await errorText(done));
+  const { job_id: jobId } = (await done.json()) as { job_id: string };
+  onUploadProgress?.(1);
+  return jobId;
+}
+
+/** fetch with a per-request timeout that also follows the caller's cancel signal. */
+async function request(path: string, init: RequestInit, signal?: AbortSignal, timeoutMs = CHUNK_TIMEOUT_MS) {
+  if (signal?.aborted) throw new ApiError('aborted');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    return await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal });
+  } catch {
+    if (signal?.aborted) throw new ApiError('aborted');
+    throw new ApiError(`Could not reach the server at ${API_URL}.`);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 function detailOf(text: string) {
@@ -168,7 +195,15 @@ function detailOf(text: string) {
 }
 
 async function errorText(res: Response) {
-  return `Server error ${res.status}${detailOf(await res.text().catch(() => ''))}`;
+  return statusMessage(res.status, await res.text().catch(() => ''));
+}
+
+/** Cloudflare tunnel errors get a plain explanation instead of a bare status code. */
+function statusMessage(status: number, body: string) {
+  if (status === 524) return 'Server error 524: the server took over 100 seconds to answer through the Cloudflare tunnel. Try again; if it keeps happening, check the server terminal.';
+  if (status === 530 || status === 1033) return `Server error ${status}: the Cloudflare tunnel is down. Restart cloudflared and Expo with the new URL.`;
+  if (status === 413) return 'Server error 413: the video is too large to send through the tunnel (about 100 MB max). Record a shorter clip.';
+  return `Server error ${status}${detailOf(body)}`;
 }
 
 function sleep(ms: number, signal?: AbortSignal) {
@@ -245,9 +280,13 @@ function normalizeInsights(body: Json): Insights {
     (body.status === 'consistent' || body.status === 'under-reporting' || body.status === 'over-reporting');
   if (!ok) throw new ApiError('The Gemini response is missing fields. Restart FastAPI so it picks up the latest code.');
   const sentiment = body.sentiment === 'positive' || body.sentiment === 'negative' ? body.sentiment : 'neutral';
+  // Green/red = does the self-report line up with the data? Red for the server's hidden-overwork
+  // flag, or when its deterministic check finds under- or over-reporting.
+  const red = body.flag === 'red' || body.status !== 'consistent';
+  const reason = typeof body.flag_reason === 'string' && body.flag_reason ? body.flag_reason : null;
   return {
-    flag: body.flag as Insights['flag'],
-    flag_reason: typeof body.flag_reason === 'string' ? body.flag_reason : null,
+    flag: red ? 'red' : 'green',
+    flag_reason: reason ?? (red ? (body.mismatch_summary as string) : null),
     sentiment,
     headline: body.headline as string,
     insights: (body.insights as unknown[]).filter((s): s is string => typeof s === 'string').slice(0, 4),
