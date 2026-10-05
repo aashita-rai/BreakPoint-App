@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -153,16 +153,7 @@ def _run_job(job_id: str, vid: Path, squat_variation: str):
         shutil.rmtree(vid.parent, ignore_errors=True)
 
 
-@app.post("/analyze/jobs")
-def start_analysis_job(file: UploadFile = File(...), squat_variation: str = Form("standard")):
-    """Accepts the upload, returns a job_id immediately, and analyzes in a background thread.
-    The app polls GET /analyze/jobs/{job_id} for real progress, so no single request runs long."""
-    td = tempfile.mkdtemp(prefix="bp_job_")
-    try:
-        vid = _read_upload(file, td)
-    except Exception:
-        shutil.rmtree(td, ignore_errors=True)
-        raise
+def _start_job(vid: Path, squat_variation: str) -> str:
     job_id = uuid.uuid4().hex
     now = time.time()
     with _jobs_lock:
@@ -171,7 +162,90 @@ def start_analysis_job(file: UploadFile = File(...), squat_variation: str = Form
         _jobs[job_id] = {"status": "queued", "stage": "queued", "progress": 0.0, "result": None,
                          "error": None, "error_code": None, "updated": now}
     threading.Thread(target=_run_job, args=(job_id, vid, squat_variation), daemon=True).start()
-    return {"job_id": job_id}
+    return job_id
+
+
+@app.post("/analyze/jobs")
+def start_analysis_job(file: UploadFile = File(...), squat_variation: str = Form("standard")):
+    """Accepts the whole video in one request, returns a job_id immediately, and analyzes in a background
+    thread. Fine on a LAN. Through a Cloudflare tunnel a slow phone upload can pass ~100 s and fail (524),
+    so the app uses the chunked /analyze/uploads routes below."""
+    td = tempfile.mkdtemp(prefix="bp_job_")
+    try:
+        vid = _read_upload(file, td)
+    except Exception:
+        shutil.rmtree(td, ignore_errors=True)
+        raise
+    return {"job_id": _start_job(vid, squat_variation)}
+
+
+# ── Chunked upload ────────────────────────────────────────────────────────────
+# The app sends the video in ~2 MB pieces, one short request each, so no request ever approaches
+# Cloudflare's ~100 s limit however slow the phone's connection. Pieces are appended in order; a piece
+# that was already received (its response got lost and the app retried) is acknowledged, not re-appended.
+_uploads: dict[str, dict] = {}
+_uploads_lock = threading.Lock()
+VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm")
+
+
+class UploadStart(BaseModel):
+    filename: str = "squats.mp4"
+    size: int = Field(gt=0, le=MAX_MB * 1024 * 1024)
+
+
+@app.post("/analyze/uploads")
+def start_upload(req: UploadStart):
+    suffix = Path(req.filename).suffix.lower() or ".mp4"
+    if suffix not in VIDEO_SUFFIXES:
+        raise HTTPException(400, f"unsupported file type {suffix}")
+    now = time.time()
+    with _uploads_lock:
+        for old in [k for k, u in _uploads.items() if now - u["updated"] > JOB_TTL_S]:
+            shutil.rmtree(_uploads.pop(old)["path"].parent, ignore_errors=True)
+        upload_id = uuid.uuid4().hex
+        path = Path(tempfile.mkdtemp(prefix="bp_up_")) / f"in{suffix}"
+        path.touch()
+        _uploads[upload_id] = {"path": path, "size": req.size, "received": 0, "updated": now}
+    return {"upload_id": upload_id}
+
+
+def _upload(upload_id: str) -> dict:
+    u = _uploads.get(upload_id)
+    if u is None:
+        raise HTTPException(404, "Unknown upload. The server may have restarted; please upload again.")
+    return u
+
+
+@app.put("/analyze/uploads/{upload_id}")
+async def upload_chunk(upload_id: str, offset: int, length: int, request: Request):
+    data = await request.body()
+    if len(data) != length:
+        # Through cloudflared, a body sent with chunked transfer encoding can arrive with the chunk framing
+        # still in it. Reject instead of corrupting the video; the app retries the piece.
+        raise HTTPException(400, f"piece arrived as {len(data)} bytes, expected {length}")
+    with _uploads_lock:
+        u = _upload(upload_id)
+        if offset + len(data) <= u["received"]:   # a retry of a piece we already have
+            return {"received": u["received"]}
+        if offset != u["received"]:
+            raise HTTPException(409, f"expected offset {u['received']}, got {offset}")
+        if u["received"] + len(data) > u["size"]:
+            raise HTTPException(413, "more data than the declared video size")
+        with open(u["path"], "ab") as f:
+            f.write(data)
+        u["received"] += len(data)
+        u["updated"] = time.time()
+        return {"received": u["received"]}
+
+
+@app.post("/analyze/uploads/{upload_id}/finish")
+def finish_upload(upload_id: str, squat_variation: str = Form("standard")):
+    with _uploads_lock:
+        u = _upload(upload_id)
+        if u["received"] != u["size"]:
+            raise HTTPException(409, f"upload incomplete: {u['received']} of {u['size']} bytes")
+        _uploads.pop(upload_id)
+    return {"job_id": _start_job(u["path"], squat_variation)}
 
 
 @app.get("/analyze/jobs/{job_id}")

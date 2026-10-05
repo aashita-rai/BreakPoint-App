@@ -94,7 +94,10 @@ The app expects:
 | Route | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Server availability and serving model |
-| `/analyze/jobs` | POST multipart `file`, `squat_variation` | Starts a background analysis and returns `{job_id}` immediately (used by the app) |
+| `/analyze/uploads` | POST JSON `{filename, size}` | Starts a chunked video upload, returns `{upload_id}` (used by the app) |
+| `/analyze/uploads/{id}?offset=&length=` | PUT raw bytes | One ~2 MB piece of the video; a repeated piece is acknowledged, not re-appended |
+| `/analyze/uploads/{id}/finish` | POST form `squat_variation` | Checks every byte arrived, starts the background analysis, returns `{job_id}` |
+| `/analyze/jobs` | POST multipart `file`, `squat_variation` | Whole video in one request, then a background job (fine on a LAN; not used by the app) |
 | `/analyze/jobs/{job_id}` | GET | Job `status`, `stage` (`queued`, `pose`, `analysis`, `render`, `done`), real `progress` 0-1, and the `result` or `error` |
 | `/analyze` | POST multipart `file` | Same analysis in one blocking request (scripts and LAN testing; long videos can exceed Cloudflare's ~100 s response limit) |
 | `/insights` | POST JSON | Gemini explanation, mismatch status, athlete/coach/trainer messages, and pain escalation (used by the app) |
@@ -245,7 +248,7 @@ Scan the new QR code. Keep all three terminals open.
 Things to know about quick tunnels:
 
 - The URL changes every time `cloudflared` restarts. When it changes, restart Expo with the new `EXPO_PUBLIC_API_URL` and `-c`.
-- Cloudflare closes any single request that takes longer than about 100 seconds (HTTP 524). That is why the app uploads to `/analyze/jobs` and polls for progress instead of waiting on one long `/analyze` request.
+- Cloudflare closes any single request that takes longer than about 100 seconds (HTTP 524), **including a slow upload**. That is why the app sends the video in ~2 MB pieces (`/analyze/uploads`) and then polls the analysis job, instead of one long upload or one long `/analyze` request. Tested through a quick tunnel: a 104 MB video uploaded over 209 s in 50 pieces with no errors. On iOS the picker also exports 720p H.264, which makes uploads several times smaller.
 - Quick tunnels are for development and demos: no uptime guarantee and **no access control**. Anyone with the URL can upload videos to your laptop and spend your Gemini quota. The app no longer displays the URL, but don't share it, and **stop `cloudflared` (Ctrl+C) as soon as the demo ends.** Production would use a named Cloudflare Tunnel with Cloudflare Access, or a hosted server.
 
 ### No server available
